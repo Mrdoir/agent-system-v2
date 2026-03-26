@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Research Hub</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #1a1a24;
+    --border: #2a2a3a;
+    --accent: #7c6dfa;
+    --accent2: #4ecdc4;
+    --accent3: #f7b731;
+    --text: #e8e8f0;
+    --muted: #6b6b85;
+    --success: #4ecdc4;
+    --warning: #f7b731;
+    --error: #ff6b6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0;
+    background-image:
+      linear-gradient(rgba(124,109,250,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(124,109,250,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; position: relative; z-index: 1; }
+
+  /* Header */
+  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 2.5rem; }
+  .header-left h1 { font-family: 'Space Mono', monospace; font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
+  .header-left h1 span { color: var(--accent); }
+  .header-left p { font-size: 13px; color: var(--muted); margin-top: 4px; font-family: 'Space Mono', monospace; }
+  .live-dot { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--success); font-family: 'Space Mono', monospace; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.3)} }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 2rem; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; position: relative; overflow: hidden; }
+  .stat-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+  .stat-card.s1::after { background: var(--accent); }
+  .stat-card.s2::after { background: var(--accent2); }
+  .stat-card.s3::after { background: var(--accent3); }
+  .stat-label { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .stat-value { font-size: 32px; font-weight: 600; font-family: 'Space Mono', monospace; }
+  .s1 .stat-value { color: var(--accent); }
+  .s2 .stat-value { color: var(--accent2); }
+  .s3 .stat-value { color: var(--accent3); }
+
+  /* Agents */
+  .section-title { font-size: 11px; font-family: 'Space Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }
+  .agents { display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; }
+  .agent { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; display: flex; align-items: center; gap: 1rem; transition: border-color 0.2s; }
+  .agent:hover { border-color: var(--accent); }
+  .agent-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .icon-scout { background: rgba(124,109,250,0.15); }
+  .icon-analyst { background: rgba(78,205,196,0.15); }
+  .icon-diver { background: rgba(247,183,49,0.15); }
+  .agent-info { flex: 1; min-width: 0; }
+  .agent-name { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
+  .agent-model { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent-status { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+  .badge { font-size: 11px; font-family: 'Space Mono', monospace; padding: 3px 10px; border-radius: 20px; font-weight: 700; }
+  .badge-active { background: rgba(78,205,196,0.15); color: var(--success); border: 1px solid rgba(78,205,196,0.3); }
+  .badge-limit { background: rgba(247,183,49,0.15); color: var(--warning); border: 1px solid rgba(247,183,49,0.3); }
+  .badge-error { background: rgba(255,107,107,0.15); color: var(--error); border: 1px solid rgba(255,107,107,0.3); }
+  .badge-unknown { background: rgba(107,107,133,0.15); color: var(--muted); border: 1px solid rgba(107,107,133,0.3); }
+
+  /* Results */
+  .results { display: flex; flex-direction: column; gap: 10px; }
+  .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: border-color 0.2s; }
+  .result-card:hover { border-color: var(--border); }
+  .result-header { padding: 1rem 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .result-header:hover { background: var(--surface2); }
+  .result-left { min-width: 0; }
+  .result-title { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .result-meta { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .result-arrow { color: var(--muted); font-size: 12px; flex-shrink: 0; transition: transform 0.2s; }
+  .result-body { display: none; padding: 1rem 1.25rem; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); line-height: 1.8; white-space: pre-wrap; max-height: 400px; overflow-y: auto; font-family: 'Space Mono', monospace; }
+  .result-card.open .result-arrow { transform: rotate(180deg); }
+  .result-card.open .result-body { display: block; }
+
+  .empty { text-align: center; padding: 3rem; color: var(--muted); font-size: 13px; font-family: 'Space Mono', monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .empty span { display: block; font-size: 28px; margin-bottom: 12px; }
+
+  .refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; font-family: 'Space Mono', monospace; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .updated { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; margin-top: 2rem; text-align: center; }
+
+  @media (max-width: 600px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+    .stats .stat-card:last-child { grid-column: 1/-1; }
+    .header { flex-direction: column; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="header-left">
+      <h1>// <span>AGENT</span> RESEARCH HUB</h1>
+      <p id="last-updated">loading...</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div class="live-dot"><div class="pulse"></div>LIVE</div>
+      <button class="refresh-btn" onclick="loadAll()">↺ REFRESH</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card s1">
+      <div class="stat-label">Results saved</div>
+      <div class="stat-value" id="stat-results">—</div>
+    </div>
+    <div class="stat-card s2">
+      <div class="stat-label">Active agents</div>
+      <div class="stat-value" id="stat-active">—</div>
+    </div>
+    <div class="stat-card s3">
+      <div class="stat-label">Tasks logged</div>
+      <div class="stat-value" id="stat-tasks">—</div>
+    </div>
+  </div>
+
+  <div class="section-title">Agents</div>
+  <div class="agents">
+    <div class="agent">
+      <div class="agent-icon icon-scout">🔍</div>
+      <div class="agent-info">
+        <div class="agent-name">Market Scout</div>
+        <div class="agent-model">gemini-2.0-flash · Google AI Studio</div>
+      </div>
+      <div class="agent-status">
+        <span class="badge badge-unknown" id="badge-scout">—</span>
+      </div>
+    </div>
+    <div class="agent">
+      <div class="agent-icon icon-analyst">📈</div>
+      <div class="agent-info">
+        <div class="agent-name">Trend Analyst</div>
+        <div class="agent-model">llama-3.3-70b · Groq</div>
+      </div>
+      <div class="agent-status">
+        <span class="badge badge-unknown" id="badge-analyst">—</span>
+      </div>
+    </div>
+    <div class="agent">
+      <div class="agent-icon icon-diver">🧠</div>
+      <div class="agent-info">
+        <div class="agent-name">Deep Diver</div>
+        <div class="agent-model">nvidia/nemotron · OpenRouter</div>
+      </div>
+      <div class="agent-status">
+        <span class="badge badge-unknown" id="badge-diver">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Research results</div>
+  <div class="results" id="results-list">
+    <div class="empty"><span>⏳</span>Loading results...</div>
+  </div>
+
+  <div class="updated" id="footer-updated"></div>
+</div>
+
+<script>
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    document.getElementById('stat-results').textContent = d.total_results || '0';
+    document.getElementById('last-updated').textContent = '// last checked ' + d.last_updated;
+    document.getElementById('footer-updated').textContent = 'auto-refreshes every 30s · ' + d.last_updated;
+
+    const agents = d.agents || {};
+    let active = 0;
+    let tasks = 0;
+
+    const setBadge = (id, state) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = 'badge';
+      if (!state) { el.textContent = 'unknown'; el.classList.add('badge-unknown'); return; }
+      const status = (state.status || '').toLowerCase();
+      if (status.includes('rate') || status.includes('limit')) {
+        el.textContent = 'rate limited'; el.classList.add('badge-limit');
+      } else if (status.includes('error')) {
+        el.textContent = 'error'; el.classList.add('badge-error');
+      } else {
+        el.textContent = 'active'; el.classList.add('badge-active'); active++;
+      }
+      if (state.tasks_completed) tasks += state.tasks_completed;
+    };
+
+    setBadge('badge-scout', agents.market_scout || agents.scout);
+    setBadge('badge-analyst', agents.trend_analyst || agents.analyst);
+    setBadge('badge-diver', agents.deep_diver || agents.diver);
+
+    document.getElementById('stat-active').textContent = active;
+    document.getElementById('stat-tasks').textContent = tasks || d.total_results || '—';
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+async function loadResults() {
+  try {
+    const r = await fetch('/api/results');
+    const data = await r.json();
+    const list = document.getElementById('results-list');
+
+    if (!data.length) {
+      list.innerHTML = '<div class="empty"><span>📂</span>No results yet — agents are working...<br>Check back in a few minutes!</div>';
+      return;
+    }
+
+    list.innerHTML = data.map((item, i) => `
+      <div class="result-card" onclick="toggle(this)">
+        <div class="result-header">
+          <div class="result-left">
+            <div class="result-title">${item.filename.replace('.md','').replace(/_/g,' ')}</div>
+            <div class="result-meta">${item.agent} · ${item.modified}</div>
+          </div>
+          <span class="result-arrow">▾</span>
+        </div>
+        <div class="result-body">${item.content}</div>
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('results-list').innerHTML = '<div class="empty"><span>⚠️</span>Could not load results</div>';
+  }
+}
+
+function toggle(el) {
+  el.classList.toggle('open');
+}
+
+function loadAll() {
+  loadStats();
+  loadResults();
+}
+
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
