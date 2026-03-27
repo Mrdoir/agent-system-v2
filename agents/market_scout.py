@@ -18,7 +18,7 @@ class MarketScout(BaseAgent):
     def __init__(self):
         super().__init__()
         self.api_key = os.getenv("GEMINI_API_KEY", "")
-        self.model = "gemini-1.5-flash"  # Free tier: 1000 req/day
+        self.model = "gemini-2.0-flash"
         self.endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
 
     def build_prompt(self, topic: str) -> str:
