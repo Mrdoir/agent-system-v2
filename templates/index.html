@@ -22,8 +22,6 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
-
-  /* Grid background */
   body::before {
     content: '';
     position: fixed; inset: 0; z-index: 0;
@@ -33,10 +31,7 @@
     background-size: 40px 40px;
     pointer-events: none;
   }
-
   .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; position: relative; z-index: 1; }
-
-  /* Header */
   .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 2.5rem; }
   .header-left h1 { font-family: 'Space Mono', monospace; font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
   .header-left h1 span { color: var(--accent); }
@@ -44,8 +39,6 @@
   .live-dot { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--success); font-family: 'Space Mono', monospace; }
   .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.3)} }
-
-  /* Stats */
   .stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 2rem; }
   .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; position: relative; overflow: hidden; }
   .stat-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
@@ -57,8 +50,6 @@
   .s1 .stat-value { color: var(--accent); }
   .s2 .stat-value { color: var(--accent2); }
   .s3 .stat-value { color: var(--accent3); }
-
-  /* Agents */
   .section-title { font-size: 11px; font-family: 'Space Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }
   .agents { display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; }
   .agent { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; display: flex; align-items: center; gap: 1rem; transition: border-color 0.2s; }
@@ -67,38 +58,35 @@
   .icon-scout { background: rgba(124,109,250,0.15); }
   .icon-analyst { background: rgba(78,205,196,0.15); }
   .icon-diver { background: rgba(247,183,49,0.15); }
+  .icon-critic { background: rgba(255,107,107,0.15); }
   .agent-info { flex: 1; min-width: 0; }
   .agent-name { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
   .agent-model { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .agent-status { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
   .badge { font-size: 11px; font-family: 'Space Mono', monospace; padding: 3px 10px; border-radius: 20px; font-weight: 700; }
   .badge-active { background: rgba(78,205,196,0.15); color: var(--success); border: 1px solid rgba(78,205,196,0.3); }
   .badge-limit { background: rgba(247,183,49,0.15); color: var(--warning); border: 1px solid rgba(247,183,49,0.3); }
   .badge-error { background: rgba(255,107,107,0.15); color: var(--error); border: 1px solid rgba(255,107,107,0.3); }
   .badge-unknown { background: rgba(107,107,133,0.15); color: var(--muted); border: 1px solid rgba(107,107,133,0.3); }
-
-  /* Results */
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 5px 12px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); }
   .results { display: flex; flex-direction: column; gap: 10px; }
-  .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: border-color 0.2s; }
-  .result-card:hover { border-color: var(--border); }
+  .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   .result-header { padding: 1rem 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .result-header:hover { background: var(--surface2); }
-  .result-left { min-width: 0; }
+  .result-left { min-width: 0; flex: 1; }
   .result-title { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .result-meta { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .result-score { font-size: 11px; font-family: 'Space Mono', monospace; padding: 2px 8px; border-radius: 10px; background: rgba(124,109,250,0.15); color: var(--accent); flex-shrink: 0; }
   .result-arrow { color: var(--muted); font-size: 12px; flex-shrink: 0; transition: transform 0.2s; }
-  .result-body { display: none; padding: 1rem 1.25rem; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); line-height: 1.8; white-space: pre-wrap; max-height: 400px; overflow-y: auto; font-family: 'Space Mono', monospace; }
+  .result-body { display: none; padding: 1rem 1.25rem; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); line-height: 1.8; white-space: pre-wrap; max-height: 500px; overflow-y: auto; font-family: 'Space Mono', monospace; }
   .result-card.open .result-arrow { transform: rotate(180deg); }
   .result-card.open .result-body { display: block; }
-
   .empty { text-align: center; padding: 3rem; color: var(--muted); font-size: 13px; font-family: 'Space Mono', monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
   .empty span { display: block; font-size: 28px; margin-bottom: 12px; }
-
   .refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; font-family: 'Space Mono', monospace; font-size: 12px; cursor: pointer; transition: all 0.2s; }
   .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
-
   .updated { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; margin-top: 2rem; text-align: center; }
-
   @media (max-width: 600px) {
     .stats { grid-template-columns: 1fr 1fr; }
     .stats .stat-card:last-child { grid-column: 1/-1; }
@@ -129,7 +117,7 @@
       <div class="stat-value" id="stat-active">—</div>
     </div>
     <div class="stat-card s3">
-      <div class="stat-label">Tasks logged</div>
+      <div class="stat-label">Topics covered</div>
       <div class="stat-value" id="stat-tasks">—</div>
     </div>
   </div>
@@ -166,9 +154,26 @@
         <span class="badge badge-unknown" id="badge-diver">—</span>
       </div>
     </div>
+    <div class="agent">
+      <div class="agent-icon icon-critic">⚡</div>
+      <div class="agent-info">
+        <div class="agent-name">Critic</div>
+        <div class="agent-model">llama-3.3-70b · Groq</div>
+      </div>
+      <div class="agent-status">
+        <span class="badge badge-unknown" id="badge-critic">—</span>
+      </div>
+    </div>
   </div>
 
-  <div class="section-title">Research results</div>
+  <div class="section-title" style="margin-bottom:8px;">Research results</div>
+  <div class="filter-bar">
+    <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
+    <button class="filter-btn" onclick="setFilter('trend_analyst', this)">Trend Analyst</button>
+    <button class="filter-btn" onclick="setFilter('deep_diver', this)">Deep Diver</button>
+    <button class="filter-btn" onclick="setFilter('market_scout', this)">Market Scout</button>
+    <button class="filter-btn" onclick="setFilter('critic', this)">Critic</button>
+  </div>
   <div class="results" id="results-list">
     <div class="empty"><span>⏳</span>Loading results...</div>
   </div>
@@ -177,6 +182,9 @@
 </div>
 
 <script>
+let allResults = [];
+let currentFilter = 'all';
+
 async function loadStats() {
   try {
     const r = await fetch('/api/stats');
@@ -187,7 +195,6 @@ async function loadStats() {
 
     const agents = d.agents || {};
     let active = 0;
-    let tasks = 0;
 
     const setBadge = (id, state) => {
       const el = document.getElementById(id);
@@ -202,15 +209,17 @@ async function loadStats() {
       } else {
         el.textContent = 'active'; el.classList.add('badge-active'); active++;
       }
-      if (state.tasks_completed) tasks += state.tasks_completed;
     };
 
     setBadge('badge-scout', agents.market_scout || agents.scout);
     setBadge('badge-analyst', agents.trend_analyst || agents.analyst);
     setBadge('badge-diver', agents.deep_diver || agents.diver);
+    setBadge('badge-critic', agents.critic);
 
     document.getElementById('stat-active').textContent = active;
-    document.getElementById('stat-tasks').textContent = tasks || d.total_results || '—';
+
+    const topics = new Set(allResults.map(r => r.topic));
+    document.getElementById('stat-tasks').textContent = topics.size || '—';
   } catch(e) {
     console.error(e);
   }
@@ -219,29 +228,49 @@ async function loadStats() {
 async function loadResults() {
   try {
     const r = await fetch('/api/results');
-    const data = await r.json();
-    const list = document.getElementById('results-list');
+    allResults = await r.json();
+    renderResults();
+  } catch(e) {
+    document.getElementById('results-list').innerHTML = '<div class="empty"><span>⚠️</span>Could not load results. Check Railway logs.</div>';
+  }
+}
 
-    if (!data.length) {
-      list.innerHTML = '<div class="empty"><span>📂</span>No results yet — agents are working...<br>Check back in a few minutes!</div>';
-      return;
-    }
+function renderResults() {
+  const list = document.getElementById('results-list');
+  let filtered = currentFilter === 'all' ? allResults : allResults.filter(r => r.agent === currentFilter);
 
-    list.innerHTML = data.map((item, i) => `
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty"><span>📂</span>No results yet — agents are working...<br>Check back in a few minutes!</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(item => {
+    const title = (item.topic || 'Unknown topic').replace(/_/g, ' ');
+    const date = item.created_at ? item.created_at.replace('T', ' ').substring(0, 16) : '';
+    const score = item.score > 0 ? `<span class="result-score">${item.score}/10</span>` : '';
+    const agentLabel = (item.agent || 'unknown').replace(/_/g, ' ');
+    const preview = (item.content || '').substring(0, 300) + '...';
+    return `
       <div class="result-card" onclick="toggle(this)">
         <div class="result-header">
           <div class="result-left">
-            <div class="result-title">${item.filename.replace('.md','').replace(/_/g,' ')}</div>
-            <div class="result-meta">${item.agent} · ${item.modified}</div>
+            <div class="result-title">${title}</div>
+            <div class="result-meta">${agentLabel} · ${date}</div>
           </div>
+          ${score}
           <span class="result-arrow">▾</span>
         </div>
-        <div class="result-body">${item.content}</div>
+        <div class="result-body">${item.content || 'No content'}</div>
       </div>
-    `).join('');
-  } catch(e) {
-    document.getElementById('results-list').innerHTML = '<div class="empty"><span>⚠️</span>Could not load results</div>';
-  }
+    `;
+  }).join('');
+}
+
+function setFilter(agent, btn) {
+  currentFilter = agent;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderResults();
 }
 
 function toggle(el) {
