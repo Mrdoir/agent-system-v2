@@ -82,7 +82,6 @@ class ManagerAgent:
             return json.load(f).get("topics", [])
 
     def build_task_queue(self):
-        # Rotate topics daily
         rotated = rotate_topics()
         if rotated:
             log_manager("📅 Topics rotated — fresh research targets loaded!")
@@ -116,7 +115,6 @@ class ManagerAgent:
                 save_result("critic", topic, crit_result["text"], score)
                 log_manager(f"Critic scored '{topic}': {score}/10")
 
-                # Telegram notification for high scores
                 notify_high_score("Critic", topic, score, crit_result["text"][:300])
 
                 if score >= 4 and not self.memory.is_rate_limited():
@@ -181,13 +179,14 @@ class ManagerAgent:
             self.run_pipeline_for_topic(topic, results_by_topic)
             time.sleep(2)
 
-        # Daily summary
         self.send_daily_summary()
 
         log_manager(f"--- Cycle complete. Total DB results: {get_total_results()} ---\n")
 
     def start(self):
         log_manager("🚀 Manager v4 started — Web Search + Rotation + Notifications active")
+        from telegram_bot import start_bot_thread
+        start_bot_thread()
         self.build_task_queue()
 
         try:
