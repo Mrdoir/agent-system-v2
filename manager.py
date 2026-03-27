@@ -190,7 +190,7 @@ class ManagerAgent:
         try:
             from dashboard import app
             t = threading.Thread(
-                target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))),
+                target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), use_reloader=False, threaded=True),
                 daemon=True
             )
             t.start()
