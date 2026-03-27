@@ -24,7 +24,6 @@ from utils.notifier import send_telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-MODEL = "mistralai/mistral-7b-instruct:free"
 
 _last_update_id = 0
 
@@ -65,14 +64,12 @@ def get_research_context():
     if total == 0:
         return None, total
 
-    # Top scored results
     top = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:5]
     top_text = "\n".join([
         f"- [{r['score']}/10] Topic: {r['topic']} | Agent: {r['agent']} | Preview: {r['content'][:300]}"
         for r in top if r.get("score", 0) > 0
     ])
 
-    # All recent results for context even if not scored
     recent_text = "\n".join([
         f"- Topic: {r['topic']} | Content: {r['content'][:200]}"
         for r in results[:10]
@@ -98,9 +95,16 @@ TOP INSIGHTS:
 
 
 def ask_ai(user_message: str, context: str) -> str:
-    """Ask AI to generate a short, friendly response."""
+    """Ask AI to generate a short, friendly response — tries multiple models."""
     if not OPENROUTER_API_KEY:
+        log("telegram_bot", "No OpenRouter key found!")
         return None
+
+    models = [
+        "mistralai/mistral-7b-instruct:free",
+        "google/gemini-2.0-flash-exp:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+    ]
 
     system = """You are a friendly AI research assistant. You help the user understand what their AI research agents have discovered.
 Keep responses SHORT (max 4-5 sentences). Be direct and highlight the most interesting findings.
@@ -120,28 +124,35 @@ USER ASKED: {user_message}
 Look through ALL the research data above and give a short, specific, helpful answer.
 Pull out the most relevant findings that answer their question directly."""
 
-    try:
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": MODEL,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": 400
-            },
-            timeout=60
-        )
-        data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        log("telegram_bot", f"AI error: {e}")
-        return None
+    for model in models:
+        try:
+            log("telegram_bot", f"Trying model: {model}")
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/Mrdoir/agent-system",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": 400
+                },
+                timeout=60
+            )
+            data = resp.json()
+            if "choices" in data:
+                return data["choices"][0]["message"]["content"].strip()
+            else:
+                log("telegram_bot", f"Model {model} failed: {data.get('error', data)}")
+        except Exception as e:
+            log("telegram_bot", f"Model {model} error: {e}")
+
+    return None
 
 
 def handle_command(text: str) -> str:
@@ -180,7 +191,7 @@ def handle_command(text: str) -> str:
         results = get_results(limit=20)
         top = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:3]
         if not top or top[0].get("score", 0) == 0:
-            return f"📝 {total} results collected but none scored yet. The Critic agent scores results after each cycle — check back soon!"
+            return f"📝 {total} results collected but none scored yet. Check back soon!"
         lines = []
         for r in top:
             lines.append(f"🏆 {r['score']}/10 — {r['topic']}\n{r['content'][:200]}...")
@@ -214,7 +225,6 @@ def handle_message(text: str) -> str:
     if total == 0:
         return "🤖 Agents just started! No research results yet. Give them 15-30 minutes and ask me again! 🔍"
 
-    # Always try AI first for natural questions
     answer = ask_ai(text, context)
     if answer:
         return answer
@@ -232,21 +242,18 @@ def process_update(update: dict):
         if not text or not chat_id:
             return
 
-        # Only respond to the owner
         if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
             log("telegram_bot", f"Ignored message from unknown chat: {chat_id}")
             return
 
         log("telegram_bot", f"Received: {text[:50]}")
 
-        # Handle commands first
         if text.startswith("/"):
             response = handle_command(text)
             if response:
                 reply(response)
                 return
 
-        # Handle natural language
         response = handle_message(text)
         reply(response)
 
@@ -267,7 +274,7 @@ def run_bot():
             updates = get_updates()
             for update in updates:
                 process_update(update)
-            time.sleep(3)  # Poll every 3 seconds, not 2
+            time.sleep(3)
         except Exception as e:
             log("telegram_bot", f"Bot loop error: {e}")
             time.sleep(10)
