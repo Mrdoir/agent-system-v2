@@ -101,11 +101,10 @@ def ask_ai(user_message: str, context: str) -> str:
         return None
 
     models = [
-        "openrouter/auto",
         "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemma-3-27b-it:free",
         "nvidia/nemotron-3-super-120b-a12b:free",
     ]
-
     system = """You are a friendly AI research assistant. You help the user understand what their AI research agents have discovered.
 Keep responses SHORT (max 4-5 sentences). Be direct and highlight the most interesting findings.
 Use simple language. Always try to answer the specific question asked using the research data provided.
