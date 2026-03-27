@@ -18,7 +18,7 @@ class DeepDiver(BaseAgent):
         super().__init__()
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
-        self.model = "deepseek/deepseek-r1:free"  # Free on OpenRouter
+        self.model = "meta-llama/llama-4-maverick:free"
 
     def build_prompt(self, topic: str) -> str:
         return f"""You are a deep research analyst. Your job is to go beyond surface-level analysis 
