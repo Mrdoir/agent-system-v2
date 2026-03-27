@@ -1,14 +1,7 @@
 """
 TELEGRAM BOT MANAGER
 Listens for your messages and answers questions about research progress.
-Runs as a background thread alongside the main manager.
-
-Commands you can send:
-  /status   — how are the agents doing?
-  /best     — top discoveries so far
-  /summary  — quick overview of everything
-  /topics   — what are agents researching?
-  anything  — just ask naturally, AI will answer
+Uses Gemini 2.5 Pro for smart answers — completely separate from research agent quota.
 """
 
 import os
@@ -16,20 +9,18 @@ import time
 import json
 import threading
 import requests
-from datetime import datetime
 from utils.logger import log
 from utils.database import get_results, get_insights, get_total_results, get_agent_statuses
 from utils.notifier import send_telegram
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-OPENROUTER_API_KEY = os.getenv("TELEGRAM_OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 _last_update_id = 0
 
 
 def get_updates():
-    """Poll Telegram for new messages."""
     global _last_update_id
     if not TELEGRAM_TOKEN:
         return []
@@ -51,12 +42,10 @@ def get_updates():
 
 
 def reply(text: str):
-    """Send a reply message."""
     send_telegram(text)
 
 
 def get_research_context():
-    """Build a short context summary from the database."""
     total = get_total_results()
     results = get_results(limit=20)
     insights = get_insights(limit=5)
@@ -94,68 +83,51 @@ TOP INSIGHTS:
     return context, total
 
 
-def ask_ai(user_message: str, context: str) -> str:
-    """Ask AI to generate a short, friendly response — tries multiple models."""
-    if not OPENROUTER_API_KEY:
-        log("telegram_bot", "No OpenRouter key found!")
+def ask_gemini(user_message: str, context: str) -> str:
+    """Ask Gemini 2.0 Flash for a smart response."""
+    if not GEMINI_API_KEY:
+        log("telegram_bot", "No Gemini API key found!")
         return None
 
-    models = [
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "google/gemma-3-27b-it:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
-    ]
     system = """You are a friendly AI research assistant. You help the user understand what their AI research agents have discovered.
 Keep responses SHORT (max 4-5 sentences). Be direct and highlight the most interesting findings.
 Use simple language. Always try to answer the specific question asked using the research data provided.
 If asked about app ideas, look through the research content and pull out any app ideas mentioned.
 If asked about trends, summarize the trend findings.
-Never say you don't have data if there is research content available — always try to extract something useful.
+Never say you don't have data if there is research content available.
 Never use markdown headers. Just plain conversational text with occasional emojis."""
 
-    prompt = f"""The user is asking about their AI research agent system.
+    prompt = f"""{system}
 
 CURRENT RESEARCH DATA:
 {context}
 
 USER ASKED: {user_message}
 
-Look through ALL the research data above and give a short, specific, helpful answer.
-Pull out the most relevant findings that answer their question directly."""
+Give a short, specific, helpful answer based on the research data above."""
 
-    for model in models:
-        try:
-            log("telegram_bot", f"Trying model: {model}")
-            resp = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/Mrdoir/agent-system",
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "max_tokens": 400
-                },
-                timeout=60
-            )
-            data = resp.json()
-            if "choices" in data:
-                return data["choices"][0]["message"]["content"].strip()
-            else:
-                log("telegram_bot", f"Model {model} failed: {data.get('error', data)}")
-        except Exception as e:
-            log("telegram_bot", f"Model {model} error: {e}")
-
-    return None
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"maxOutputTokens": 400, "temperature": 0.7}
+            },
+            timeout=30
+        )
+        data = resp.json()
+        if "candidates" in data:
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            log("telegram_bot", f"Gemini error: {data}")
+            return None
+    except Exception as e:
+        log("telegram_bot", f"Gemini error: {e}")
+        return None
 
 
 def handle_command(text: str) -> str:
-    """Handle slash commands with instant responses."""
     context, total = get_research_context()
     cmd = text.strip().lower().split()[0]
 
@@ -176,7 +148,7 @@ def handle_command(text: str) -> str:
     if cmd == "/status":
         statuses = get_agent_statuses()
         if not statuses:
-            return f"🤖 Agents are running! {total} results collected so far. No detailed status yet — check back in a few minutes."
+            return f"🤖 Agents are running! {total} results collected so far."
         lines = []
         for name, info in statuses.items():
             status = "✅ Active" if info.get("status") == "active" else "⏸ Limited"
@@ -186,7 +158,7 @@ def handle_command(text: str) -> str:
 
     if cmd == "/best":
         if total == 0:
-            return "🔍 Agents are just getting started! No results yet — check back in 15 minutes."
+            return "🔍 Agents are just getting started! Check back in 15 minutes."
         results = get_results(limit=20)
         top = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:3]
         if not top or top[0].get("score", 0) == 0:
@@ -209,30 +181,28 @@ def handle_command(text: str) -> str:
 
     if cmd == "/summary":
         if total == 0:
-            return "🚀 System is live! Nothing to summarize yet — give it 15-30 minutes for first results."
+            return "🚀 System is live! Nothing to summarize yet — give it 15-30 minutes."
         context, _ = get_research_context()
-        answer = ask_ai("Give me a quick summary of the most interesting things discovered so far.", context)
+        answer = ask_gemini("Give me a quick summary of the most interesting things discovered so far.", context)
         return answer or f"📊 {total} results collected. Try /best for top findings!"
 
     return None
 
 
 def handle_message(text: str) -> str:
-    """Handle any free-form message."""
     context, total = get_research_context()
 
     if total == 0:
-        return "🤖 Agents just started! No research results yet. Give them 15-30 minutes and ask me again! 🔍"
+        return "🤖 Agents just started! No research results yet. Give them 15-30 minutes! 🔍"
 
-    answer = ask_ai(text, context)
+    answer = ask_gemini(text, context)
     if answer:
         return answer
 
-    return f"📊 Got {total} research results so far. Try /best to see top findings or /status to check the agents!"
+    return f"📊 Got {total} results so far. Try /best to see top findings or /status to check agents!"
 
 
 def process_update(update: dict):
-    """Process a single Telegram update."""
     try:
         msg = update.get("message", {})
         chat_id = str(msg.get("chat", {}).get("id", ""))
@@ -242,7 +212,6 @@ def process_update(update: dict):
             return
 
         if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
-            log("telegram_bot", f"Ignored message from unknown chat: {chat_id}")
             return
 
         log("telegram_bot", f"Received: {text[:50]}")
@@ -261,7 +230,6 @@ def process_update(update: dict):
 
 
 def run_bot():
-    """Main polling loop — runs forever in background thread."""
     if not TELEGRAM_TOKEN:
         log("telegram_bot", "No token found, bot disabled.")
         return
@@ -280,7 +248,6 @@ def run_bot():
 
 
 def start_bot_thread():
-    """Start the bot as a background daemon thread."""
     t = threading.Thread(target=run_bot, daemon=True)
     t.start()
     log("telegram_bot", "Bot thread started.")
