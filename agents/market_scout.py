@@ -1,8 +1,7 @@
 """
 AGENT 1: MARKET SCOUT
-Uses: Google Gemini (free, 1000 req/day on Flash)
-Job: Find competitors, user complaints, market gaps
-Now reads memory before researching — gets smarter every cycle
+Uses: Google Gemini (free)
+Now with REAL WEB SEARCH — finds actual current data!
 """
 
 import os
@@ -10,6 +9,7 @@ import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
 from utils.memory_context import get_context_for_prompt
+from utils.web_search import search_web, search_reddit, format_search_results
 
 
 class MarketScout(BaseAgent):
@@ -25,47 +25,45 @@ class MarketScout(BaseAgent):
     def build_prompt(self, topic: str) -> str:
         memory_context = get_context_for_prompt(topic)
 
-        return f"""You are a market research expert finding SPECIFIC, NON-OBVIOUS market insights.
+        # Get real web data
+        web_results = search_web(f"{topic} app complaints 2026")
+        reddit_results = search_reddit(topic)
+        web_context = format_search_results(web_results + reddit_results)
+
+        return f"""You are a market research expert. You have access to REAL current web data below.
 
 {memory_context}
 
-NOW RESEARCH THIS TOPIC: {topic}
+## REAL WEB DATA (use this for specific, current insights):
+{web_context}
 
-RULES:
-- Only report what is NOT already in the knowledge base above
-- Be specific: name real apps, real complaints, real numbers
-- No vague statements like "users want better UX"
-- If a point is already covered above, skip it entirely
+NOW RESEARCH: {topic}
 
-Provide your research in this format:
+Use the web data above to find SPECIFIC, REAL insights. Quote real sources when possible.
 
-## NEW Market Findings (not in knowledge base)
-[Only genuinely new findings. Real app names, real user complaints with specifics]
+## New Market Findings
+[Based on real web data above — specific apps, real complaints, real numbers]
 
 ## Top Existing Solutions & Their SPECIFIC Weaknesses
-[Name 3-5 real apps. For each: one specific weakness with evidence]
+[Real apps with evidence-backed weaknesses]
 
-## Specific User Complaints (with source if possible)
-[Real complaints, real language users use. Not generic.]
+## Real User Complaints (from web data)
+[Direct from web results — real language, real frustrations]
 
 ## Untapped Market Gaps
-[Specific gaps with evidence — why does this gap exist? Who is affected?]
+[Specific gaps with evidence from web data]
 
 ## Verdict
-[Is there something genuinely new here worth noting?]
-
-If you find nothing new beyond what's already known, say: "No new findings this cycle." """
+[What's genuinely worth noting based on real current data?]"""
 
     def call_api(self, prompt: str) -> dict:
         if not self.api_key:
             return {"success": False, "error": "GEMINI_API_KEY not set"}
-
         headers = {"Content-Type": "application/json"}
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.7}
         }
-
         try:
             resp = requests.post(
                 f"{self.endpoint}?key={self.api_key}",
@@ -77,7 +75,5 @@ If you find nothing new beyond what's already known, say: "No new findings this 
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             return {"success": True, "text": text}
-        except requests.exceptions.Timeout:
-            return {"success": False, "error": "Timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}

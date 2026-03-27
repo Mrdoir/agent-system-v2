@@ -1,8 +1,7 @@
 """
 AGENT 2: TREND ANALYST
-Uses: Groq (free tier, fast)
-Job: Spot emerging trends, timing signals
-Now reads memory before researching — avoids repeating old trends
+Uses: Groq (free, fast)
+Now with REAL WEB SEARCH — finds actual trending data!
 """
 
 import os
@@ -10,6 +9,7 @@ import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
 from utils.memory_context import get_context_for_prompt
+from utils.web_search import search_web, format_search_results
 
 
 class TrendAnalyst(BaseAgent):
@@ -24,45 +24,41 @@ class TrendAnalyst(BaseAgent):
 
     def build_prompt(self, topic: str) -> str:
         memory_context = get_context_for_prompt(topic)
+        web_results = search_web(f"{topic} trend growth 2026")
+        web_context = format_search_results(web_results)
 
-        return f"""You are a sharp trend analyst. Your job is to find EMERGING trends that others haven't spotted yet.
+        return f"""You are a sharp trend analyst with access to real current web data.
 
 {memory_context}
 
-NOW ANALYZE TRENDS FOR: {topic}
+## REAL CURRENT WEB DATA:
+{web_context}
 
-RULES:
-- Only report trends NOT already in the knowledge base above
-- Focus on signals from the LAST 3-6 months specifically
-- Give evidence: numbers, growth rates, real examples
-- Skip any trend already documented above
+ANALYZE TRENDS FOR: {topic}
 
-Format:
+Use web data for specific evidence. Only report NEW trends not in knowledge base.
 
-## NEW Trend Signals (not previously documented)
-[Only trends not in knowledge base. Include growth signals, timing, evidence]
+## New Trend Signals
+[From web data — specific growth signals with evidence]
 
 ## Why NOW Matters
-[What specifically changed in the last 6 months that makes this topic timely?]
+[What changed in last 6 months? Use web data.]
 
-## Who Is Driving This (be specific)
-[Which exact user segment? Age, profession, behavior — be precise]
+## Who Is Driving This
+[Specific user segments with evidence]
 
 ## 12-Month Prediction
-[Specific prediction with reasoning — not generic "AI will grow"]
+[Specific, evidence-based prediction]
 
 ## Contrarian Take
-[What does everyone get wrong about this trend?]
+[What does everyone get wrong?]
 
 ## Build Timing Verdict
-[Specific window: too early / perfect timing / too late? Why?]
-
-If nothing new beyond existing knowledge: say "Trends already documented. No new signals this cycle." """
+[Too early / perfect / too late? Why?]"""
 
     def call_api(self, prompt: str) -> dict:
         if not self.api_key:
             return {"success": False, "error": "GROQ_API_KEY not set"}
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -70,13 +66,12 @@ If nothing new beyond existing knowledge: say "Trends already documented. No new
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "You are a sharp trend analyst. Be specific, avoid generic statements."},
+                {"role": "system", "content": "Sharp trend analyst. Be specific, use provided web data."},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": 1500,
             "temperature": 0.6
         }
-
         try:
             resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=30)
             if resp.status_code == 429:
@@ -85,7 +80,5 @@ If nothing new beyond existing knowledge: say "Trends already documented. No new
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
             text = resp.json()["choices"][0]["message"]["content"]
             return {"success": True, "text": text}
-        except requests.exceptions.Timeout:
-            return {"success": False, "error": "Timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}

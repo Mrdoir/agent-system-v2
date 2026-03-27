@@ -1,7 +1,7 @@
 """
 MANAGER AGENT - The Brain
-Full pipeline: Scout → Analyst → Deep Diver → Critic → Memory
-Persistent state via SQLite database.
+Full pipeline: Scout → Analyst → Diver → Critic → Memory
++ Web Search, Daily Topic Rotation, Telegram Notifications
 """
 
 from dotenv import load_dotenv
@@ -12,7 +12,7 @@ import json
 import time
 import schedule
 import threading
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from agents.market_scout import MarketScout
 from agents.trend_analyst import TrendAnalyst
@@ -22,8 +22,10 @@ from agents.memory_agent import MemoryAgent
 from utils.logger import log, log_manager
 from utils.database import (
     init_db, save_result, get_total_results,
-    update_agent_status, get_recent_topics, add_do_not_repeat
+    update_agent_status, get_insights
 )
+from utils.topic_rotator import rotate_topics
+from utils.notifier import notify_high_score, notify_daily_summary
 
 RESEARCH_TOPICS_FILE = "research_topics.json"
 STATE_FILE = "state/manager_state.json"
@@ -43,7 +45,8 @@ class ManagerAgent:
         self.memory = MemoryAgent()
         self.task_queue = self.state.get("task_queue", [])
         self.completed = self.state.get("completed", [])
-        log_manager("Manager Agent initialized. Pipeline: Scout→Analyst→Diver→Critic→Memory")
+        self.last_summary_date = self.state.get("last_summary_date", "")
+        log_manager("Manager v4 — Web Search + Topic Rotation + Telegram Notifications")
 
     def _load_state(self):
         if Path(STATE_FILE).exists():
@@ -53,7 +56,11 @@ class ManagerAgent:
 
     def _save_state(self):
         with open(STATE_FILE, "w") as f:
-            json.dump({"task_queue": self.task_queue, "completed": self.completed}, f, indent=2)
+            json.dump({
+                "task_queue": self.task_queue,
+                "completed": self.completed,
+                "last_summary_date": self.last_summary_date
+            }, f, indent=2)
 
     def load_topics(self):
         if not Path(RESEARCH_TOPICS_FILE).exists():
@@ -75,6 +82,11 @@ class ManagerAgent:
             return json.load(f).get("topics", [])
 
     def build_task_queue(self):
+        # Rotate topics daily
+        rotated = rotate_topics()
+        if rotated:
+            log_manager("📅 Topics rotated — fresh research targets loaded!")
+
         topics = self.load_topics()
         done_keys = {(t["agent"], t["topic"]) for t in self.completed}
         queued_keys = {(t["agent"], t["topic"]) for t in self.task_queue}
@@ -85,11 +97,11 @@ class ManagerAgent:
                 if key not in done_keys and key not in queued_keys:
                     self.task_queue.append({"agent": agent_name, "topic": topic, "status": "pending"})
 
-        log_manager(f"Queue: {len([t for t in self.task_queue if t['status'] == 'pending'])} pending tasks")
+        pending = len([t for t in self.task_queue if t["status"] == "pending"])
+        log_manager(f"Queue: {pending} pending tasks")
         self._save_state()
 
     def run_pipeline_for_topic(self, topic: str, results_by_topic: dict):
-        """Run Critic + Memory on all research collected for a topic."""
         contents = results_by_topic.get(topic, [])
         if not contents:
             return
@@ -97,7 +109,6 @@ class ManagerAgent:
         combined = "\n\n---\n\n".join(contents)
         log_manager(f"Running Critic on: {topic}")
 
-        # Critic pass
         if not self.critic.is_rate_limited():
             crit_result = self.critic.evaluate(topic, combined)
             if crit_result["success"]:
@@ -105,13 +116,24 @@ class ManagerAgent:
                 save_result("critic", topic, crit_result["text"], score)
                 log_manager(f"Critic scored '{topic}': {score}/10")
 
-                # Memory pass — only on decent quality research
+                # Telegram notification for high scores
+                notify_high_score("Critic", topic, score, crit_result["text"][:300])
+
                 if score >= 4 and not self.memory.is_rate_limited():
                     mem_result = self.memory.synthesize(combined + "\n\n" + crit_result["text"], topic)
                     if mem_result["success"]:
-                        log_manager(f"Memory updated (novelty: {mem_result.get('novelty_score', '?')}/10)")
-            else:
-                log_manager(f"Critic skipped: {crit_result.get('error', 'rate limited')}")
+                        log_manager(f"Memory updated (novelty: {mem_result.get('novelty_score','?')}/10)")
+
+    def send_daily_summary(self):
+        today = date.today().isoformat()
+        if self.last_summary_date == today:
+            return
+        insights = get_insights(limit=3)
+        previews = [i["content"][:100] for i in insights]
+        notify_daily_summary(get_total_results(), len(self.completed), previews)
+        self.last_summary_date = today
+        self._save_state()
+        log_manager("Daily summary sent")
 
     def run_cycle(self):
         log_manager("--- Starting work cycle ---")
@@ -142,64 +164,47 @@ class ManagerAgent:
             if result["success"]:
                 task["status"] = "done"
                 self.completed.append({"agent": agent_name, "topic": topic, "timestamp": datetime.now().isoformat()})
-
-                # Collect for pipeline
                 if topic not in results_by_topic:
                     results_by_topic[topic] = []
                 results_by_topic[topic].append(result["content"])
-
                 log_manager(f"[{agent_name}] ✓ Done: {topic}")
             elif result.get("rate_limited"):
                 log_manager(f"[{agent_name}] Hit rate limit mid-task.")
             else:
-                log_manager(f"[{agent_name}] ✗ Error: {result.get('error', '?')}")
+                log_manager(f"[{agent_name}] ✗ Error: {result.get('error','?')}")
                 task["status"] = "error"
 
             self._save_state()
             time.sleep(3)
 
-        # Run Critic + Memory on completed topics
         for topic in results_by_topic:
             self.run_pipeline_for_topic(topic, results_by_topic)
             time.sleep(2)
 
-        total = get_total_results()
-        log_manager(f"--- Cycle complete. Total DB results: {total} ---\n")
+        # Daily summary
+        self.send_daily_summary()
 
-    def status(self):
-        print("\n" + "="*50)
-        print("  AGENT SYSTEM STATUS")
-        print("="*50)
-        for name, agent in self.agents.items():
-            limited = agent.is_rate_limited()
-            reset = f"resets in {agent.minutes_until_reset()} min" if limited else "available"
-            print(f"  {name:<20} {'🔴 LIMITED' if limited else '🟢 READY'} ({reset})")
-        print(f"  {'critic':<20} {'🔴 LIMITED' if self.critic.is_rate_limited() else '🟢 READY'}")
-        print(f"  {'memory':<20} {'🔴 LIMITED' if self.memory.is_rate_limited() else '🟢 READY'}")
-        pending = len([t for t in self.task_queue if t["status"] == "pending"])
-        print(f"\n  Pending tasks : {pending}")
-        print(f"  DB results    : {get_total_results()}")
-        print("="*50 + "\n")
+        log_manager(f"--- Cycle complete. Total DB results: {get_total_results()} ---\n")
 
     def start(self):
-        log_manager("🚀 Manager started. Full 5-agent pipeline active.")
+        log_manager("🚀 Manager v4 started — Web Search + Rotation + Notifications active")
         self.build_task_queue()
-        self.status()
 
-        # Start dashboard
         try:
             from dashboard import app
+            port = int(os.environ.get("PORT", 8080))
             t = threading.Thread(
-                target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), use_reloader=False, threaded=True),
+                target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True),
                 daemon=True
             )
             t.start()
-            log_manager("📊 Dashboard running")
+            log_manager(f"📊 Dashboard running on port {port}")
         except Exception as e:
             log_manager(f"Dashboard error: {e}")
 
         self.run_cycle()
         schedule.every(15).minutes.do(self.run_cycle)
+        schedule.every().day.at("09:00").do(self.send_daily_summary)
 
         while True:
             schedule.run_pending()
@@ -212,4 +217,3 @@ if __name__ == "__main__":
         manager.start()
     except KeyboardInterrupt:
         log_manager("Manager stopped.")
-        manager.status()

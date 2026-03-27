@@ -1,8 +1,7 @@
 """
 AGENT 3: DEEP DIVER
-Uses: OpenRouter → Nvidia Nemotron (free)
-Job: Deep strategic analysis, why things fail, how to win
-Now reads memory — goes deeper than previous cycles
+Uses: Nvidia Nemotron via OpenRouter (free)
+Now with REAL WEB SEARCH — grounds strategy in real data!
 """
 
 import os
@@ -10,6 +9,7 @@ import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
 from utils.memory_context import get_context_for_prompt
+from utils.web_search import search_web, format_search_results
 
 
 class DeepDiver(BaseAgent):
@@ -24,48 +24,44 @@ class DeepDiver(BaseAgent):
 
     def build_prompt(self, topic: str) -> str:
         memory_context = get_context_for_prompt(topic)
+        web_results = search_web(f"{topic} why fails opportunity 2026")
+        web_context = format_search_results(web_results)
 
-        return f"""You are a deep strategic analyst. Your job is to go DEEPER than surface-level research and find insights others miss.
+        return f"""You are a deep strategic analyst with real web data.
 
 {memory_context}
 
-NOW DEEP DIVE INTO: {topic}
+## REAL WEB DATA:
+{web_context}
 
-RULES:
-- Only explore angles NOT already covered in the knowledge base above
-- Go deeper than previous research — if scouts found "what", you find "why" and "how"
-- First-principles thinking: question assumptions
-- Be specific: real examples, real failures, real opportunities
+DEEP DIVE: {topic}
 
-Format:
+Go deeper than surface level. Use web data for evidence.
 
-## Deeper "Why" Analysis
-[Why do the problems in this space actually exist? Root causes, not symptoms]
+## Deeper Why Analysis
+[Root causes from web evidence — not symptoms]
 
 ## What Previous Research Missed
-[What angle hasn't been explored yet based on the knowledge base above?]
+[New angle not in knowledge base]
 
 ## Hidden Opportunities
-[Specific opportunities that emerge from combining known pain points in new ways]
+[From combining web data with known pain points]
 
 ## Why Current Solutions REALLY Fail
-[Not surface reasons — the deep structural reasons incumbents can't fix this]
+[Structural reasons with evidence]
 
-## The Unfair Advantage Needed
-[What would give a new entrant an edge that can't be copied easily?]
+## Unfair Advantage Needed
+[What gives a new entrant an uncopyable edge?]
 
 ## 3 Contrarian Takes
-[What does everyone believe that is actually wrong about this space?]
+[What does everyone believe that's wrong?]
 
 ## MVP Concept
-[The simplest possible product that would solve the core problem. Be specific.]
-
-If nothing new to add: "Deep analysis complete. No new angles beyond existing knowledge." """
+[Simplest possible product — be very specific]"""
 
     def call_api(self, prompt: str) -> dict:
         if not self.api_key:
             return {"success": False, "error": "OPENROUTER_API_KEY not set"}
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -75,13 +71,12 @@ If nothing new to add: "Deep analysis complete. No new angles beyond existing kn
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "You are a deep strategic analyst. Think rigorously, go beyond surface level."},
+                {"role": "system", "content": "Deep strategic analyst. Use web data for evidence."},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": 2000,
             "temperature": 0.5
         }
-
         try:
             resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=45)
             if resp.status_code == 429:
@@ -90,7 +85,5 @@ If nothing new to add: "Deep analysis complete. No new angles beyond existing kn
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
             text = resp.json()["choices"][0]["message"]["content"]
             return {"success": True, "text": text}
-        except requests.exceptions.Timeout:
-            return {"success": False, "error": "Timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}
