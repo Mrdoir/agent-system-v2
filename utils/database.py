@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Use /data if available (Railway volume), otherwise local
-DB_DIR = "/data" if os.path.exists("/data") else "data"
+DB_DIR = "/data"
 Path(DB_DIR).mkdir(exist_ok=True)
 DB_PATH = f"{DB_DIR}/research.db"
 
