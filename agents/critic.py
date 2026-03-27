@@ -22,11 +22,15 @@ class CriticAgent(BaseAgent):
         self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
         self.model = "llama-3.3-70b-versatile"
 
-    def build_prompt(self, topic: str, research_content: str) -> str:
+    def evaluate(self, topic: str, research_content: str) -> dict:
+        """Evaluate research and return score + filtered content."""
+        if self.is_rate_limited():
+            return {"success": False, "rate_limited": True}
+
         do_not_repeat = get_do_not_repeat()
         dnr_list = "\n".join(f"- {p}" for p in do_not_repeat[:20]) if do_not_repeat else "None yet"
 
-        return f"""You are a brutal research critic. Your job is to evaluate AI research outputs and filter out generic, useless insights.
+        prompt = f"""You are a brutal research critic. Your job is to evaluate AI research outputs and filter out generic, useless insights.
 
 TOPIC: {topic}
 
@@ -57,13 +61,6 @@ Evaluate this research and respond in this EXACT format:
 [1 sentence: Is this research useful? Why?]
 
 Be ruthless. Generic = worthless. Specific = valuable."""
-
-    def evaluate(self, topic: str, research_content: str) -> dict:
-        """Evaluate research and return score + filtered content."""
-        if self.is_rate_limited():
-            return {"success": False, "rate_limited": True}
-
-        prompt = self.build_prompt(topic, research_content)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -112,6 +109,3 @@ Be ruthless. Generic = worthless. Specific = valuable."""
 
     def call_api(self, prompt: str) -> dict:
         return {"success": False, "error": "Use evaluate() instead"}
-
-    def build_prompt(self, topic: str, research_content: str = "") -> str:
-        return ""
