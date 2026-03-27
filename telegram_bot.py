@@ -101,9 +101,9 @@ def ask_ai(user_message: str, context: str) -> str:
         return None
 
     models = [
-        "mistralai/mistral-7b-instruct:free",
-        "google/gemini-2.0-flash-exp:free",
-        "meta-llama/llama-3.2-3b-instruct:free",
+        "openrouter/auto",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
     ]
 
     system = """You are a friendly AI research assistant. You help the user understand what their AI research agents have discovered.
