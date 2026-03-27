@@ -4,11 +4,13 @@ Uses: Groq (fast, free)
 Job: Score research quality, filter generic insights, rank findings
 Runs AFTER the 3 research agents to improve output quality
 """
+
 import os
 import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
 from utils.database import save_result, get_do_not_repeat
+
 
 class CriticAgent(BaseAgent):
     NAME = "critic"
@@ -20,9 +22,10 @@ class CriticAgent(BaseAgent):
         self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
         self.model = "llama-3.3-70b-versatile"
 
-    def build_prompt(self, topic: str, research_content: str = "") -> str:
+    def build_prompt(self, topic: str, research_content: str) -> str:
         do_not_repeat = get_do_not_repeat()
         dnr_list = "\n".join(f"- {p}" for p in do_not_repeat[:20]) if do_not_repeat else "None yet"
+
         return f"""You are a brutal research critic. Your job is to evaluate AI research outputs and filter out generic, useless insights.
 
 TOPIC: {topic}
@@ -60,10 +63,8 @@ Be ruthless. Generic = worthless. Specific = valuable."""
         if self.is_rate_limited():
             return {"success": False, "rate_limited": True}
 
-        if not research_content or len(research_content.strip()) < 50:
-            return {"success": False, "error": "No research content provided"}
-
         prompt = self.build_prompt(topic, research_content)
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -77,15 +78,21 @@ Be ruthless. Generic = worthless. Specific = valuable."""
             "max_tokens": 1000,
             "temperature": 0.3
         }
+
         try:
             resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=30)
+
             if resp.status_code == 429:
                 self.set_rate_limited(reset_minutes=30)
                 return {"success": False, "rate_limited": True}
+
             if resp.status_code != 200:
                 return {"success": False, "error": f"HTTP {resp.status_code}"}
+
             text = resp.json()["choices"][0]["message"]["content"]
-            score = 5
+
+            # Extract score
+            score = 5  # default
             for line in text.split("\n"):
                 if "QUALITY SCORE:" in line:
                     try:
@@ -93,7 +100,9 @@ Be ruthless. Generic = worthless. Specific = valuable."""
                         score = min(10, max(0, score))
                     except:
                         pass
+
             return {"success": True, "text": text, "score": score}
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -103,3 +112,6 @@ Be ruthless. Generic = worthless. Specific = valuable."""
 
     def call_api(self, prompt: str) -> dict:
         return {"success": False, "error": "Use evaluate() instead"}
+
+    def build_prompt(self, topic: str, research_content: str = "") -> str:
+        return ""
