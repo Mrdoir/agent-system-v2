@@ -24,7 +24,7 @@ from utils.notifier import send_telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-MODEL = "deepseek/deepseek-chat:free"
+MODEL = "mistralai/mistral-7b-instruct:free"
 
 _last_update_id = 0
 
@@ -135,7 +135,7 @@ Pull out the most relevant findings that answer their question directly."""
                 ],
                 "max_tokens": 400
             },
-            timeout=30
+            timeout=60
         )
         data = resp.json()
         return data["choices"][0]["message"]["content"].strip()
