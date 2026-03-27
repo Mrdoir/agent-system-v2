@@ -23,7 +23,7 @@ from utils.notifier import send_telegram
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("TELEGRAM_OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY", "")
 
 _last_update_id = 0
 
