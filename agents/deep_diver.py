@@ -1,18 +1,20 @@
 """
 AGENT 3: DEEP DIVER
-Uses: OpenRouter → DeepSeek R1 (free tier available, strong reasoning)
-Job: Deep analysis, why things fail, how to build smarter
+Uses: OpenRouter → Nvidia Nemotron (free)
+Job: Deep strategic analysis, why things fail, how to win
+Now reads memory — goes deeper than previous cycles
 """
 
 import os
 import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
+from utils.memory_context import get_context_for_prompt
 
 
 class DeepDiver(BaseAgent):
     NAME = "deep_diver"
-    PROVIDER = "DeepSeek R1 via OpenRouter"
+    PROVIDER = "Nvidia Nemotron via OpenRouter"
 
     def __init__(self):
         super().__init__()
@@ -21,42 +23,48 @@ class DeepDiver(BaseAgent):
         self.model = "nvidia/nemotron-3-super-120b-a12b:free"
 
     def build_prompt(self, topic: str) -> str:
-        return f"""You are a deep research analyst. Your job is to go beyond surface-level analysis 
-and uncover the real strategic insights that others miss.
+        memory_context = get_context_for_prompt(topic)
 
-RESEARCH TOPIC: {topic}
+        return f"""You are a deep strategic analyst. Your job is to go DEEPER than surface-level research and find insights others miss.
 
-Conduct a deep analysis using this format:
+{memory_context}
 
-## Core Problem Being Solved
-[What fundamental human/business problem does this topic address?]
+NOW DEEP DIVE INTO: {topic}
 
-## Why Most Attempts Fail
-[What mistakes do builders/companies repeatedly make in this space?]
+RULES:
+- Only explore angles NOT already covered in the knowledge base above
+- Go deeper than previous research — if scouts found "what", you find "why" and "how"
+- First-principles thinking: question assumptions
+- Be specific: real examples, real failures, real opportunities
 
-## The Insight Others Miss
-[What non-obvious insight would give a new entrant an edge?]
+Format:
 
-## Monetization Models That Work
-[What revenue models succeed here and why? Include real examples if possible]
+## Deeper "Why" Analysis
+[Why do the problems in this space actually exist? Root causes, not symptoms]
 
-## Tech Stack Considerations
-[What technical choices matter most for building in this space?]
+## What Previous Research Missed
+[What angle hasn't been explored yet based on the knowledge base above?]
 
-## Unfair Advantage Needed
-[What would a founder need to have (network, data, skill) to win here?]
+## Hidden Opportunities
+[Specific opportunities that emerge from combining known pain points in new ways]
 
-## Build vs Buy vs Partner
-[What should be built from scratch, what should use existing tools, what needs partnerships?]
+## Why Current Solutions REALLY Fail
+[Not surface reasons — the deep structural reasons incumbents can't fix this]
+
+## The Unfair Advantage Needed
+[What would give a new entrant an edge that can't be copied easily?]
 
 ## 3 Contrarian Takes
-[What does conventional wisdom get wrong about this space?]
+[What does everyone believe that is actually wrong about this space?]
 
-Go deep. Be specific. Think like a first-principles builder."""
+## MVP Concept
+[The simplest possible product that would solve the core problem. Be specific.]
+
+If nothing new to add: "Deep analysis complete. No new angles beyond existing knowledge." """
 
     def call_api(self, prompt: str) -> dict:
         if not self.api_key:
-            return {"success": False, "error": "OPENROUTER_API_KEY not set in .env"}
+            return {"success": False, "error": "OPENROUTER_API_KEY not set"}
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -67,7 +75,7 @@ Go deep. Be specific. Think like a first-principles builder."""
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "You are a deep strategic analyst. Think rigorously and go beyond surface level."},
+                {"role": "system", "content": "You are a deep strategic analyst. Think rigorously, go beyond surface level."},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": 2000,
@@ -76,19 +84,13 @@ Go deep. Be specific. Think like a first-principles builder."""
 
         try:
             resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=45)
-
             if resp.status_code == 429:
-                log(self.NAME, "Rate limit hit (429)")
                 return {"success": False, "rate_limited": True}
-
             if resp.status_code != 200:
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
-
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"]
+            text = resp.json()["choices"][0]["message"]["content"]
             return {"success": True, "text": text}
-
         except requests.exceptions.Timeout:
-            return {"success": False, "error": "Request timed out"}
+            return {"success": False, "error": "Timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}

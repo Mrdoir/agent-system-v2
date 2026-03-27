@@ -2,13 +2,14 @@
 AGENT 1: MARKET SCOUT
 Uses: Google Gemini (free, 1000 req/day on Flash)
 Job: Find competitors, user complaints, market gaps
+Now reads memory before researching — gets smarter every cycle
 """
 
 import os
-import json
 import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
+from utils.memory_context import get_context_for_prompt
 
 
 class MarketScout(BaseAgent):
@@ -22,35 +23,42 @@ class MarketScout(BaseAgent):
         self.endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
 
     def build_prompt(self, topic: str) -> str:
-        return f"""You are a market research expert. Research the following topic and provide a structured analysis.
+        memory_context = get_context_for_prompt(topic)
 
-TOPIC: {topic}
+        return f"""You are a market research expert finding SPECIFIC, NON-OBVIOUS market insights.
 
-Provide your research in this exact format:
+{memory_context}
 
-## Market Overview
-[2-3 sentences on current state of this market/space]
+NOW RESEARCH THIS TOPIC: {topic}
 
-## Top Existing Solutions
-[List 3-5 existing apps/tools with their main strengths]
+RULES:
+- Only report what is NOT already in the knowledge base above
+- Be specific: name real apps, real complaints, real numbers
+- No vague statements like "users want better UX"
+- If a point is already covered above, skip it entirely
 
-## Key User Complaints
-[List the most common complaints users have about existing solutions - be specific]
+Provide your research in this format:
 
-## Market Gaps & Opportunities
-[What is missing? What could be built better? Be specific about opportunities]
+## NEW Market Findings (not in knowledge base)
+[Only genuinely new findings. Real app names, real user complaints with specifics]
 
-## Competitive Moat Ideas
-[What would make a new entrant hard to copy or beat?]
+## Top Existing Solutions & Their SPECIFIC Weaknesses
+[Name 3-5 real apps. For each: one specific weakness with evidence]
+
+## Specific User Complaints (with source if possible)
+[Real complaints, real language users use. Not generic.]
+
+## Untapped Market Gaps
+[Specific gaps with evidence — why does this gap exist? Who is affected?]
 
 ## Verdict
-[1 paragraph: Is this worth building in? Why or why not?]
+[Is there something genuinely new here worth noting?]
 
-Be specific, data-driven, and actionable. Focus on real opportunities."""
+If you find nothing new beyond what's already known, say: "No new findings this cycle." """
 
     def call_api(self, prompt: str) -> dict:
         if not self.api_key:
-            return {"success": False, "error": "GEMINI_API_KEY not set in .env"}
+            return {"success": False, "error": "GEMINI_API_KEY not set"}
 
         headers = {"Content-Type": "application/json"}
         payload = {
@@ -61,23 +69,15 @@ Be specific, data-driven, and actionable. Focus on real opportunities."""
         try:
             resp = requests.post(
                 f"{self.endpoint}?key={self.api_key}",
-                headers=headers,
-                json=payload,
-                timeout=30
+                headers=headers, json=payload, timeout=30
             )
-
             if resp.status_code == 429:
-                log(self.NAME, "Rate limit hit (429)")
                 return {"success": False, "rate_limited": True}
-
             if resp.status_code != 200:
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
-
-            data = resp.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             return {"success": True, "text": text}
-
         except requests.exceptions.Timeout:
-            return {"success": False, "error": "Request timed out"}
+            return {"success": False, "error": "Timeout"}
         except Exception as e:
             return {"success": False, "error": str(e)}
