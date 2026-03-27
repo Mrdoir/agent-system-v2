@@ -59,27 +59,37 @@ def reply(text: str):
 def get_research_context():
     """Build a short context summary from the database."""
     total = get_total_results()
-    results = get_results(limit=10)
+    results = get_results(limit=20)
     insights = get_insights(limit=5)
 
     if total == 0:
         return None, total
 
+    # Top scored results
     top = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:5]
     top_text = "\n".join([
-        f"- [{r['score']}/10] {r['topic']} (by {r['agent']}): {r['content'][:200]}..."
+        f"- [{r['score']}/10] Topic: {r['topic']} | Agent: {r['agent']} | Preview: {r['content'][:300]}"
         for r in top if r.get("score", 0) > 0
     ])
 
+    # All recent results for context even if not scored
+    recent_text = "\n".join([
+        f"- Topic: {r['topic']} | Content: {r['content'][:200]}"
+        for r in results[:10]
+    ])
+
     insight_text = "\n".join([
-        f"- {i['content'][:200]}..."
+        f"- {i['content'][:200]}"
         for i in insights[:3]
     ]) if insights else "No insights yet."
 
     context = f"""TOTAL RESULTS IN DATABASE: {total}
 
-TOP RESEARCH FINDINGS:
+TOP SCORED FINDINGS:
 {top_text or 'No scored results yet.'}
+
+RECENT RESEARCH (last 10):
+{recent_text}
 
 TOP INSIGHTS:
 {insight_text}"""
@@ -94,7 +104,10 @@ def ask_ai(user_message: str, context: str) -> str:
 
     system = """You are a friendly AI research assistant. You help the user understand what their AI research agents have discovered.
 Keep responses SHORT (max 4-5 sentences). Be direct and highlight the most interesting findings.
-Use simple language. If there's nothing interesting yet, be honest but encouraging.
+Use simple language. Always try to answer the specific question asked using the research data provided.
+If asked about app ideas, look through the research content and pull out any app ideas mentioned.
+If asked about trends, summarize the trend findings.
+Never say you don't have data if there is research content available — always try to extract something useful.
 Never use markdown headers. Just plain conversational text with occasional emojis."""
 
     prompt = f"""The user is asking about their AI research agent system.
@@ -104,7 +117,8 @@ CURRENT RESEARCH DATA:
 
 USER ASKED: {user_message}
 
-Give a short, friendly answer based on the data above."""
+Look through ALL the research data above and give a short, specific, helpful answer.
+Pull out the most relevant findings that answer their question directly."""
 
     try:
         resp = requests.post(
@@ -119,7 +133,7 @@ Give a short, friendly answer based on the data above."""
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt}
                 ],
-                "max_tokens": 300
+                "max_tokens": 400
             },
             timeout=30
         )
@@ -141,9 +155,11 @@ def handle_command(text: str) -> str:
             "You can ask me anything like:\n"
             "• What did the agents find?\n"
             "• Any good app ideas?\n"
+            "• What are the biggest trends?\n"
             "• /status — agent status\n"
             "• /best — top discoveries\n"
-            "• /topics — current research topics\n\n"
+            "• /topics — current research topics\n"
+            "• /summary — quick overview\n\n"
             "I'll keep you updated on the best findings! 🔍"
         )
 
@@ -164,10 +180,10 @@ def handle_command(text: str) -> str:
         results = get_results(limit=20)
         top = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:3]
         if not top or top[0].get("score", 0) == 0:
-            return f"📝 {total} results collected so far but none scored yet. Check back tomorrow!"
+            return f"📝 {total} results collected but none scored yet. The Critic agent scores results after each cycle — check back soon!"
         lines = []
         for r in top:
-            lines.append(f"🏆 {r['score']}/10 — {r['topic']}\n{r['content'][:150]}...")
+            lines.append(f"🏆 {r['score']}/10 — {r['topic']}\n{r['content'][:200]}...")
         return "🔥 Top Discoveries\n\n" + "\n\n".join(lines)
 
     if cmd == "/topics":
@@ -185,7 +201,7 @@ def handle_command(text: str) -> str:
         if total == 0:
             return "🚀 System is live! Nothing to summarize yet — give it 15-30 minutes for first results."
         context, _ = get_research_context()
-        answer = ask_ai("Give me a quick summary of what has been discovered so far.", context)
+        answer = ask_ai("Give me a quick summary of the most interesting things discovered so far.", context)
         return answer or f"📊 {total} results collected. Try /best for top findings!"
 
     return None
@@ -198,6 +214,7 @@ def handle_message(text: str) -> str:
     if total == 0:
         return "🤖 Agents just started! No research results yet. Give them 15-30 minutes and ask me again! 🔍"
 
+    # Always try AI first for natural questions
     answer = ask_ai(text, context)
     if answer:
         return answer
@@ -215,18 +232,21 @@ def process_update(update: dict):
         if not text or not chat_id:
             return
 
+        # Only respond to the owner
         if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
             log("telegram_bot", f"Ignored message from unknown chat: {chat_id}")
             return
 
         log("telegram_bot", f"Received: {text[:50]}")
 
+        # Handle commands first
         if text.startswith("/"):
             response = handle_command(text)
             if response:
                 reply(response)
                 return
 
+        # Handle natural language
         response = handle_message(text)
         reply(response)
 
@@ -247,7 +267,7 @@ def run_bot():
             updates = get_updates()
             for update in updates:
                 process_update(update)
-            time.sleep(2)
+            time.sleep(3)  # Poll every 3 seconds, not 2
         except Exception as e:
             log("telegram_bot", f"Bot loop error: {e}")
             time.sleep(10)
