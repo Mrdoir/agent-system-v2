@@ -1,11 +1,11 @@
 """
-Web Search utility — Real Google results via Serper + Jina fallback
-Priority: Serper (Google) → Jina → Reddit → DuckDuckGo
+Web Search utility — Real Google results via Serper + full content via Jina
+Priority: Serper (Google) → Jina Search → DuckDuckGo
+Full article reading via Jina Reader API
 """
 
 import os
 import requests
-import json
 from utils.logger import log
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
@@ -32,7 +32,14 @@ def search_serper(query: str, max_results: int = 5) -> list:
         data = resp.json()
         results = []
 
-        # Organic results
+        kg = data.get("knowledgeGraph", {})
+        if kg.get("description"):
+            results.append({
+                "title": kg.get("title", ""),
+                "snippet": kg.get("description", ""),
+                "url": kg.get("website", "")
+            })
+
         for r in data.get("organic", [])[:max_results]:
             results.append({
                 "title": r.get("title", ""),
@@ -40,20 +47,38 @@ def search_serper(query: str, max_results: int = 5) -> list:
                 "url": r.get("link", "")
             })
 
-        # Knowledge graph if available
-        kg = data.get("knowledgeGraph", {})
-        if kg.get("description"):
-            results.insert(0, {
-                "title": kg.get("title", ""),
-                "snippet": kg.get("description", ""),
-                "url": kg.get("website", "")
-            })
-
         log("web_search", f"Serper returned {len(results)} results for: {query[:50]}")
         return results[:max_results]
     except Exception as e:
         log("web_search", f"Serper error: {e}")
         return []
+
+
+def fetch_full_content(url: str) -> str:
+    """
+    Fetch full article content using Jina Reader API.
+    Turns any URL into clean readable text.
+    """
+    if not url or not JINA_API_KEY:
+        return ""
+    try:
+        resp = requests.get(
+            f"https://r.jina.ai/{url}",
+            headers={
+                "Authorization": f"Bearer {JINA_API_KEY}",
+                "Accept": "text/plain",
+                "X-Return-Format": "text"
+            },
+            timeout=15
+        )
+        if resp.status_code != 200:
+            return ""
+        content = resp.text[:3000]  # First 3000 chars is enough
+        log("web_search", f"Fetched full content from: {url[:60]}")
+        return content
+    except Exception as e:
+        log("web_search", f"Jina reader error: {e}")
+        return ""
 
 
 def search_jina(query: str, max_results: int = 5) -> list:
@@ -70,7 +95,6 @@ def search_jina(query: str, max_results: int = 5) -> list:
             timeout=15
         )
         if resp.status_code != 200:
-            log("web_search", f"Jina failed: HTTP {resp.status_code}")
             return []
         data = resp.json()
         results = []
@@ -80,10 +104,10 @@ def search_jina(query: str, max_results: int = 5) -> list:
                 "snippet": r.get("description", "") or r.get("content", "")[:300],
                 "url": r.get("url", "")
             })
-        log("web_search", f"Jina returned {len(results)} results for: {query[:50]}")
+        log("web_search", f"Jina returned {len(results)} results")
         return results[:max_results]
     except Exception as e:
-        log("web_search", f"Jina error: {e}")
+        log("web_search", f"Jina search error: {e}")
         return []
 
 
@@ -118,7 +142,7 @@ def search_duckduckgo(query: str, max_results: int = 5) -> list:
 
 
 def search_reddit(topic: str) -> list:
-    """Search Reddit for real user discussions."""
+    """Search Reddit for real user discussions — fetches full post content."""
     try:
         resp = requests.get(
             "https://www.reddit.com/search.json",
@@ -130,9 +154,11 @@ def search_reddit(topic: str) -> list:
         results = []
         for post in data.get("data", {}).get("children", []):
             p = post.get("data", {})
+            # Get full post text if available
+            full_text = p.get("selftext", "")[:500] or p.get("title", "")
             results.append({
                 "title": p.get("title", ""),
-                "snippet": p.get("selftext", "")[:300] or p.get("title", ""),
+                "snippet": full_text,
                 "url": f"https://reddit.com{p.get('permalink', '')}",
                 "score": p.get("score", 0),
                 "subreddit": p.get("subreddit", "")
@@ -146,28 +172,47 @@ def search_reddit(topic: str) -> list:
 
 def search_web(query: str, max_results: int = 5) -> list:
     """
-    Main search function — tries best sources in order:
+    Main search — tries best sources in order:
     1. Serper (real Google results)
-    2. Jina AI
+    2. Jina AI search
     3. DuckDuckGo
     """
-    # Try Serper first (best quality)
     results = search_serper(query, max_results)
     if results:
         return results
 
-    # Try Jina fallback
     log("web_search", "Serper failed, trying Jina...")
     results = search_jina(query, max_results)
     if results:
         return results
 
-    # DuckDuckGo last resort
     log("web_search", "Jina failed, trying DuckDuckGo...")
     return search_duckduckgo(query, max_results)
 
 
-def format_search_results(results: list) -> str:
+def search_and_fetch(query: str, max_results: int = 3) -> list:
+    """
+    Search AND fetch full content of top results.
+    Returns results with full article text — much deeper than snippets!
+    """
+    results = search_web(query, max_results)
+
+    enriched = []
+    for r in results:
+        url = r.get("url", "")
+        full_content = fetch_full_content(url) if url else ""
+
+        enriched.append({
+            "title": r.get("title", ""),
+            "snippet": r.get("snippet", ""),
+            "url": url,
+            "full_content": full_content or r.get("snippet", "")
+        })
+
+    return enriched
+
+
+def format_search_results(results: list, use_full_content: bool = False) -> str:
     """Format search results for injection into agent prompts."""
     if not results:
         return "No web results found."
@@ -175,13 +220,19 @@ def format_search_results(results: list) -> str:
     formatted = []
     for r in results:
         title = r.get("title", "")[:100]
-        snippet = r.get("snippet", "")[:300]
-        url = r.get("url", "")
         subreddit = r.get("subreddit", "")
 
-        if subreddit:
-            formatted.append(f"• [Reddit r/{subreddit}] {title}\n  {snippet}")
+        # Use full content if available, otherwise snippet
+        if use_full_content and r.get("full_content"):
+            content = r["full_content"][:800]
         else:
-            formatted.append(f"• {title}\n  {snippet}\n  Source: {url}")
+            content = r.get("snippet", "")[:300]
+
+        url = r.get("url", "")
+
+        if subreddit:
+            formatted.append(f"• [Reddit r/{subreddit}] {title}\n  {content}")
+        else:
+            formatted.append(f"• {title}\n  {content}\n  Source: {url}")
 
     return "\n\n".join(formatted)
