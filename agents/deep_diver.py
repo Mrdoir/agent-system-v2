@@ -1,14 +1,14 @@
 """
 AGENT 3: DEEP DIVER
 Uses: OpenRouter (dual key rotation) + Groq fallback
-Now with REAL WEB SEARCH — grounds strategy in real data!
+Now with REAL WEB SEARCH + full article reading!
 """
 import os
 import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
 from utils.memory_context import get_context_for_prompt
-from utils.web_search import search_web, format_search_results
+from utils.web_search import search_and_fetch, format_search_results
 
 
 class DeepDiver(BaseAgent):
@@ -33,12 +33,13 @@ class DeepDiver(BaseAgent):
 
     def build_prompt(self, topic: str) -> str:
         memory_context = get_context_for_prompt(topic)
-        web_results = search_web(f"{topic} why fails opportunity 2026")
-        web_context = format_search_results(web_results)
+        web_results = search_and_fetch(f"{topic} why fails opportunity 2026", max_results=3)
+        web_context = format_search_results(web_results, use_full_content=True)
+
         return f"""You are a deep strategic analyst with real web data.
 {memory_context}
 
-## REAL WEB DATA:
+## REAL WEB DATA (full articles):
 {web_context}
 
 DEEP DIVE: {topic}
@@ -69,7 +70,6 @@ Go deeper than surface level. Use web data for evidence.
         if not self.api_keys:
             return {"success": False, "error": "No OpenRouter keys"}
 
-        # Try every combination of key + model
         for api_key in self.api_keys:
             for model in self.openrouter_models:
                 try:
@@ -94,23 +94,22 @@ Go deeper than surface level. Use web data for evidence.
                         timeout=60
                     )
                     if resp.status_code == 429:
-                        log("deep_diver", f"Rate limited on key ...{api_key[-6:]} + {model}, trying next...")
+                        log("deep_diver", f"Rate limited, trying next...")
                         continue
                     if resp.status_code != 200:
                         log("deep_diver", f"Failed: HTTP {resp.status_code}")
                         continue
                     data = resp.json()
                     if "choices" not in data:
-                        log("deep_diver", f"Bad response: {data}")
                         continue
                     text = data["choices"][0]["message"]["content"]
-                    log("deep_diver", f"Success with key ...{api_key[-6:]} + {model}")
+                    log("deep_diver", f"Success with {model}")
                     return {"success": True, "text": text}
                 except Exception as e:
                     log("deep_diver", f"Error: {e}")
                     continue
 
-        return {"success": False, "error": "All OpenRouter key+model combos failed"}
+        return {"success": False, "error": "All OpenRouter combos failed"}
 
     def call_groq(self, prompt: str) -> dict:
         if not self.groq_key:
@@ -145,11 +144,8 @@ Go deeper than surface level. Use web data for evidence.
             return {"success": False, "error": str(e)}
 
     def call_api(self, prompt: str) -> dict:
-        # Try all OpenRouter key+model combos first
         result = self.call_openrouter(prompt)
         if result["success"]:
             return result
-
-        # Groq as final fallback
         log("deep_diver", "All OpenRouter failed, falling back to Groq...")
         return self.call_groq(prompt)
