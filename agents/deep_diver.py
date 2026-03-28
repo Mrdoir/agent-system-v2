@@ -1,6 +1,6 @@
 """
 AGENT 3: DEEP DIVER
-Uses: OpenRouter models + Groq fallback (very reliable)
+Uses: OpenRouter (dual key rotation) + Groq fallback
 Now with REAL WEB SEARCH — grounds strategy in real data!
 """
 import os
@@ -13,11 +13,16 @@ from utils.web_search import search_web, format_search_results
 
 class DeepDiver(BaseAgent):
     NAME = "deep_diver"
-    PROVIDER = "OpenRouter + Groq fallback"
+    PROVIDER = "OpenRouter dual key + Groq fallback"
 
     def __init__(self):
         super().__init__()
-        self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+        self.api_keys = [
+            k for k in [
+                os.getenv("OPENROUTER_API_KEY", ""),
+                os.getenv("OPENROUTER_API_KEY_2", ""),
+            ] if k
+        ]
         self.groq_key = os.getenv("GROQ_API_KEY", "")
         self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
         self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
@@ -61,51 +66,51 @@ Go deeper than surface level. Use web data for evidence.
 [Simplest possible product — be very specific]"""
 
     def call_openrouter(self, prompt: str) -> dict:
-        if not self.api_key:
-            return {"success": False, "error": "No OpenRouter key"}
+        if not self.api_keys:
+            return {"success": False, "error": "No OpenRouter keys"}
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://agent-system.local",
-            "X-Title": "Research Agent System"
-        }
+        # Try every combination of key + model
+        for api_key in self.api_keys:
+            for model in self.openrouter_models:
+                try:
+                    log("deep_diver", f"Trying key ...{api_key[-6:]} + model: {model}")
+                    resp = requests.post(
+                        self.endpoint,
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": "https://agent-system.local",
+                            "X-Title": "Research Agent System"
+                        },
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": "Deep strategic analyst. Use web data for evidence."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            "max_tokens": 1500,
+                            "temperature": 0.5
+                        },
+                        timeout=60
+                    )
+                    if resp.status_code == 429:
+                        log("deep_diver", f"Rate limited on key ...{api_key[-6:]} + {model}, trying next...")
+                        continue
+                    if resp.status_code != 200:
+                        log("deep_diver", f"Failed: HTTP {resp.status_code}")
+                        continue
+                    data = resp.json()
+                    if "choices" not in data:
+                        log("deep_diver", f"Bad response: {data}")
+                        continue
+                    text = data["choices"][0]["message"]["content"]
+                    log("deep_diver", f"Success with key ...{api_key[-6:]} + {model}")
+                    return {"success": True, "text": text}
+                except Exception as e:
+                    log("deep_diver", f"Error: {e}")
+                    continue
 
-        for model in self.openrouter_models:
-            try:
-                log("deep_diver", f"Trying OpenRouter model: {model}")
-                resp = requests.post(
-                    self.endpoint,
-                    headers=headers,
-                    json={
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": "Deep strategic analyst. Use web data for evidence."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": 1500,
-                        "temperature": 0.5
-                    },
-                    timeout=60
-                )
-                if resp.status_code == 429:
-                    log("deep_diver", f"{model} rate limited, trying next...")
-                    continue
-                if resp.status_code != 200:
-                    log("deep_diver", f"{model} failed: HTTP {resp.status_code}")
-                    continue
-                data = resp.json()
-                if "choices" not in data:
-                    log("deep_diver", f"{model} bad response")
-                    continue
-                text = data["choices"][0]["message"]["content"]
-                log("deep_diver", f"OpenRouter success with: {model}")
-                return {"success": True, "text": text}
-            except Exception as e:
-                log("deep_diver", f"{model} error: {e}")
-                continue
-
-        return {"success": False, "error": "All OpenRouter models failed"}
+        return {"success": False, "error": "All OpenRouter key+model combos failed"}
 
     def call_groq(self, prompt: str) -> dict:
         if not self.groq_key:
@@ -140,7 +145,7 @@ Go deeper than surface level. Use web data for evidence.
             return {"success": False, "error": str(e)}
 
     def call_api(self, prompt: str) -> dict:
-        # Try OpenRouter first
+        # Try all OpenRouter key+model combos first
         result = self.call_openrouter(prompt)
         if result["success"]:
             return result
