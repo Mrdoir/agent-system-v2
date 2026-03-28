@@ -1,7 +1,7 @@
 """
 TELEGRAM BOT MANAGER
 Listens for your messages and answers questions about research progress.
-Uses Gemini 2.5 Pro for smart answers — completely separate from research agent quota.
+Uses Gemini with smart caching to stay within free quota limits.
 """
 
 import os
@@ -18,6 +18,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_BOT_KEY") or os.getenv("GEMINI_API_KEY", "")
 
 _last_update_id = 0
+_answer_cache = {}
+_cache_time = {}
+CACHE_MINUTES = 10
 
 
 def get_updates():
@@ -84,20 +87,22 @@ TOP INSIGHTS:
 
 
 def ask_gemini(user_message: str, context: str) -> str:
-    """Ask Gemini 2.0 Flash for a smart response."""
+    """Ask Gemini with caching to avoid quota issues."""
     if not GEMINI_API_KEY:
         log("telegram_bot", "No Gemini API key found!")
         return None
 
-    system = """You are a friendly AI research assistant. You help the user understand what their AI research agents have discovered.
-Keep responses SHORT (max 4-5 sentences). Be direct and highlight the most interesting findings.
-Use simple language. Always try to answer the specific question asked using the research data provided.
-If asked about app ideas, look through the research content and pull out any app ideas mentioned.
-If asked about trends, summarize the trend findings.
-Never say you don't have data if there is research content available.
-Never use markdown headers. Just plain conversational text with occasional emojis."""
+    # Check cache first
+    cache_key = user_message.lower().strip()[:100]
+    if cache_key in _answer_cache:
+        age_minutes = (time.time() - _cache_time[cache_key]) / 60
+        if age_minutes < CACHE_MINUTES:
+            log("telegram_bot", f"Returning cached answer for: {cache_key[:30]}")
+            return _answer_cache[cache_key]
 
-    prompt = f"""{system}
+    prompt = f"""You are a friendly AI research assistant. Keep responses SHORT (max 4-5 sentences).
+Be direct and highlight the most interesting findings. Use simple language with occasional emojis.
+Never use markdown headers. Just plain conversational text.
 
 CURRENT RESEARCH DATA:
 {context}
@@ -118,13 +123,39 @@ Give a short, specific, helpful answer based on the research data above."""
         )
         data = resp.json()
         if "candidates" in data:
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            # Cache the answer
+            _answer_cache[cache_key] = answer
+            _cache_time[cache_key] = time.time()
+            return answer
+        elif data.get("error", {}).get("code") == 429:
+            # Rate limited — return a helpful fallback instead
+            log("telegram_bot", "Gemini rate limited, using fallback")
+            return None
         else:
             log("telegram_bot", f"Gemini error: {data}")
             return None
     except Exception as e:
         log("telegram_bot", f"Gemini error: {e}")
         return None
+
+
+def get_quick_summary() -> str:
+    """Build a quick summary without AI for when Gemini is rate limited."""
+    total = get_total_results()
+    if total == 0:
+        return "🤖 Agents are running but no results yet. Check back in 15 minutes!"
+
+    results = get_results(limit=20)
+    top = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:3]
+
+    if not top or top[0].get("score", 0) == 0:
+        recent = results[:3]
+        topics = [r["topic"] for r in recent]
+        return f"📊 {total} results collected so far! Agents are researching: {', '.join(topics[:2])}. Try /best or /summary for more details!"
+
+    lines = [f"• {r['score']}/10 — {r['topic']}" for r in top]
+    return f"📊 {total} results collected! Top findings:\n" + "\n".join(lines) + "\n\nTry /best for full details!"
 
 
 def handle_command(text: str) -> str:
@@ -184,7 +215,7 @@ def handle_command(text: str) -> str:
             return "🚀 System is live! Nothing to summarize yet — give it 15-30 minutes."
         context, _ = get_research_context()
         answer = ask_gemini("Give me a quick summary of the most interesting things discovered so far.", context)
-        return answer or f"📊 {total} results collected. Try /best for top findings!"
+        return answer or get_quick_summary()
 
     return None
 
@@ -199,7 +230,8 @@ def handle_message(text: str) -> str:
     if answer:
         return answer
 
-    return f"📊 Got {total} results so far. Try /best to see top findings or /status to check agents!"
+    # Fallback when Gemini is rate limited — still useful!
+    return get_quick_summary()
 
 
 def process_update(update: dict):
