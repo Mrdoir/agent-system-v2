@@ -1,7 +1,7 @@
 """
 AGENT 1: MARKET SCOUT
 Uses: Gemini 2.5 Flash-Lite + Groq fallback (free)
-Now with REAL WEB SEARCH — finds actual current data!
+Now with REAL WEB SEARCH + full article reading!
 """
 
 import os
@@ -9,7 +9,7 @@ import requests
 from agents.base_agent import BaseAgent
 from utils.logger import log
 from utils.memory_context import get_context_for_prompt
-from utils.web_search import search_web, search_reddit, format_search_results
+from utils.web_search import search_and_fetch, search_reddit, format_search_results
 
 
 class MarketScout(BaseAgent):
@@ -27,10 +27,10 @@ class MarketScout(BaseAgent):
 
     def build_prompt(self, topic: str) -> str:
         memory_context = get_context_for_prompt(topic)
-
-        web_results = search_web(f"{topic} app complaints 2026")
+        web_results = search_and_fetch(f"{topic} app complaints 2026", max_results=3)
         reddit_results = search_reddit(topic)
-        web_context = format_search_results(web_results + reddit_results)
+        web_context = format_search_results(web_results, use_full_content=True)
+        web_context += "\n\n## REDDIT DISCUSSIONS:\n" + format_search_results(reddit_results)
 
         return f"""You are a market research expert. You have access to REAL current web data below.
 
@@ -114,11 +114,8 @@ Use the web data above to find SPECIFIC, REAL insights. Quote real sources when 
             return {"success": False, "error": str(e)}
 
     def call_api(self, prompt: str) -> dict:
-        # Try Gemini first
         result = self.call_gemini(prompt)
         if result["success"]:
             return result
-
-        # Groq fallback
         log("market_scout", "Falling back to Groq...")
         return self.call_groq(prompt)
