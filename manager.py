@@ -1,8 +1,7 @@
 """
-MANAGER AGENT - The Brain
+MANAGER AGENT - The Brain v5
 Sequential pipeline: Scout → Analyst → Diver → Critic → Memory
-Each agent reads what the previous one found and goes DEEPER.
-+ Web Search, Daily Topic Rotation, Telegram Notifications
+Each agent reads critic feedback from last cycle and improves.
 """
 
 from dotenv import load_dotenv
@@ -47,7 +46,7 @@ class ManagerAgent:
         self.task_queue = self.state.get("task_queue", [])
         self.completed = self.state.get("completed", [])
         self.last_summary_date = self.state.get("last_summary_date", "")
-        log_manager("Manager v5 — Sequential Pipeline + Real Web Search")
+        log_manager("Manager v5 — Sequential Pipeline + Critic Feedback Loop")
 
     def _load_state(self):
         if Path(STATE_FILE).exists():
@@ -101,81 +100,78 @@ class ManagerAgent:
 
     def run_sequential_pipeline(self, topic: str) -> dict:
         """
-        Run all agents sequentially on one topic.
-        Each agent reads what the previous one found and goes deeper.
+        Sequential pipeline — each agent builds on previous findings
+        AND reads its own critic feedback to improve.
         Scout → Analyst → Deep Diver → Critic → Memory
         """
-        log_manager(f"🔬 Starting sequential pipeline for: {topic}")
+        log_manager(f"🔬 Starting pipeline for: {topic}")
         all_findings = []
 
-        # STEP 1 — Market Scout: initial research
+        # STEP 1 — Market Scout
         scout = self.agents["market_scout"]
         if not scout.is_rate_limited():
-            log_manager(f"[SCOUT] Researching: {topic}")
-            result = scout.research(topic)
-            if result["success"]:
-                scout_findings = result["content"]
-                all_findings.append(f"## SCOUT FINDINGS:\n{scout_findings}")
+            log_manager(f"[SCOUT] Researching (with critic feedback applied)...")
+            # Pass agent_name so it loads its own critic feedback
+            scout_prompt = scout.build_prompt(topic)
+            scout_result = scout.call_api(scout_prompt)
+            if scout_result.get("success"):
+                scout.save_to_db(topic, scout_result["text"])
+                all_findings.append(f"## SCOUT FINDINGS:\n{scout_result['text']}")
                 log_manager(f"[SCOUT] ✓ Done")
                 time.sleep(3)
-            elif result.get("rate_limited"):
-                log_manager(f"[SCOUT] Rate limited, skipping")
+            elif scout_result.get("rate_limited"):
+                scout.set_rate_limited()
+                log_manager(f"[SCOUT] Rate limited")
         else:
             log_manager(f"[SCOUT] Rate limited, skipping")
 
-        # STEP 2 — Trend Analyst: reads Scout's findings, goes deeper
+        # STEP 2 — Trend Analyst: reads Scout findings + own critic feedback
         analyst = self.agents["trend_analyst"]
         if not analyst.is_rate_limited():
-            log_manager(f"[ANALYST] Reading Scout findings and analyzing trends...")
-
-            # Build enhanced prompt with Scout's findings
-            scout_context = all_findings[0] if all_findings else "No prior research available."
-            enhanced_prompt = analyst.build_prompt(topic) + f"""
+            log_manager(f"[ANALYST] Reading Scout + applying critic feedback...")
+            scout_context = all_findings[0] if all_findings else "No prior research."
+            analyst_prompt = analyst.build_prompt(topic) + f"""
 
 ## WHAT MARKET SCOUT ALREADY FOUND (go deeper, don't repeat):
 {scout_context}
 
-Based on what Scout found above, analyze the TRENDS more deeply.
-Focus on angles Scout missed. Add trend data Scout didn't have."""
+Based on Scout's findings, analyze TRENDS more deeply.
+Focus on angles Scout missed."""
 
-            api_result = analyst.call_api(enhanced_prompt)
-            if api_result.get("success"):
-                analyst_findings = api_result["text"]
-                analyst.save_to_db(topic, analyst_findings)
-                all_findings.append(f"## ANALYST FINDINGS:\n{analyst_findings}")
+            analyst_result = analyst.call_api(analyst_prompt)
+            if analyst_result.get("success"):
+                analyst.save_to_db(topic, analyst_result["text"])
+                all_findings.append(f"## ANALYST FINDINGS:\n{analyst_result['text']}")
                 log_manager(f"[ANALYST] ✓ Done — built on Scout's research")
                 time.sleep(3)
-            elif api_result.get("rate_limited"):
+            elif analyst_result.get("rate_limited"):
                 analyst.set_rate_limited()
-                log_manager(f"[ANALYST] Rate limited, skipping")
+                log_manager(f"[ANALYST] Rate limited")
         else:
             log_manager(f"[ANALYST] Rate limited, skipping")
 
-        # STEP 3 — Deep Diver: reads Scout + Analyst, goes deepest
+        # STEP 3 — Deep Diver: reads Scout + Analyst + own critic feedback
         diver = self.agents["deep_diver"]
         if not diver.is_rate_limited():
-            log_manager(f"[DIVER] Reading all findings and diving deep...")
-
-            prior_research = "\n\n".join(all_findings) if all_findings else "No prior research available."
-            enhanced_prompt = diver.build_prompt(topic) + f"""
+            log_manager(f"[DIVER] Reading all findings + applying critic feedback...")
+            prior_research = "\n\n".join(all_findings) if all_findings else "No prior research."
+            diver_prompt = diver.build_prompt(topic) + f"""
 
 ## WHAT PREVIOUS AGENTS FOUND (go deeper, find what they missed):
 {prior_research}
 
-You are the FINAL researcher. Scout found surface data. Analyst found trends.
-Your job: find the HIDDEN insights, contrarian angles, and specific MVP opportunities
+You are the FINAL researcher. Find HIDDEN insights and specific MVP opportunities
 that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
 
-            api_result = diver.call_api(enhanced_prompt)
-            if api_result.get("success"):
-                diver_findings = api_result["text"]
-                diver.save_to_db(topic, diver_findings)
-                all_findings.append(f"## DEEP DIVER FINDINGS:\n{diver_findings}")
-                log_manager(f"[DIVER] ✓ Done — built on Scout + Analyst research")
+            diver_result = diver.call_api(diver_prompt)
+            if diver_result.get("success"):
+                diver.save_to_db(topic, diver_result["text"])
+                all_findings.append(f"## DEEP DIVER FINDINGS:\n{diver_result['text']}")
+                log_manager(f"[DIVER] ✓ Done — built on all previous research")
                 time.sleep(3)
-            elif api_result.get("rate_limited"):
+            elif diver_result.get("rate_limited"):
                 diver.set_rate_limited()
-                log_manager(f"[DIVER] Rate limited, skipping")
+                log_manager(f"[DIVER] Rate limited")
         else:
             log_manager(f"[DIVER] Rate limited, skipping")
 
@@ -183,16 +179,16 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
             log_manager(f"No findings for {topic} — all agents rate limited")
             return {"success": False}
 
-        # STEP 4 — Critic: scores all combined findings
+        # STEP 4 — Critic: deep reasoning evaluation + saves per-agent feedback
         combined = "\n\n---\n\n".join(all_findings)
-        log_manager(f"[CRITIC] Scoring all findings for: {topic}")
+        log_manager(f"[CRITIC] Deep reasoning evaluation for: {topic}")
 
         if not self.critic.is_rate_limited():
             crit_result = self.critic.evaluate(topic, combined)
             if crit_result["success"]:
                 score = crit_result["score"]
                 save_result("critic", topic, crit_result["text"], score)
-                log_manager(f"[CRITIC] ✓ Scored: {score}/10")
+                log_manager(f"[CRITIC] ✓ Overall score: {score}/10 — feedback saved for all agents")
                 notify_high_score("Critic", topic, score, crit_result["text"][:300])
 
                 # STEP 5 — Memory: learns from everything
@@ -219,7 +215,6 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
             self.build_task_queue()
             pending = [t for t in self.task_queue if t["status"] == "pending"]
 
-        # Process one topic at a time through the full pipeline
         for task in pending:
             topic = task["topic"]
             result = self.run_sequential_pipeline(topic)
@@ -237,7 +232,7 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
                 log_manager(f"❌ Pipeline failed for: {topic}")
 
             self._save_state()
-            time.sleep(5)  # Pause between topics
+            time.sleep(5)
 
         self.send_daily_summary()
         log_manager(f"--- Cycle complete. Total DB results: {get_total_results()} ---\n")
@@ -254,7 +249,7 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
         log_manager("Daily summary sent")
 
     def start(self):
-        log_manager("🚀 Manager v5 started — Sequential Pipeline active!")
+        log_manager("🚀 Manager v5 — Sequential Pipeline + Critic Feedback Loop active!")
         from telegram_bot import start_bot_thread
         start_bot_thread()
         self.build_task_queue()
