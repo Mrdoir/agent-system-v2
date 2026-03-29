@@ -26,10 +26,10 @@ class CriticAgent(BaseAgent):
 
         # Best reasoning models — DeepSeek R1 thinks step by step
         self.reasoning_models = [
-            "deepseek/deepseek-r1:free",
-            "qwen/qwen3-235b-a22b:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-        ]
+    "deepseek/deepseek-r1:free",          # Best reasoning - DeepSeek R1
+    "qwen/qwen3-235b-a22b:free",          # Qwen3 235B - second best
+    "meta-llama/llama-3.3-70b-instruct:free",  # Fast fallback
+]
 
     def build_eval_prompt(self, topic: str, research_content: str) -> str:
         do_not_repeat = get_do_not_repeat()
