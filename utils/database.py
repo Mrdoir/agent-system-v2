@@ -10,7 +10,6 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-# Use /data if available (Railway volume), otherwise local
 DB_DIR = "/data" if os.path.exists("/data") else "data"
 Path(DB_DIR).mkdir(exist_ok=True)
 DB_PATH = f"{DB_DIR}/research.db"
@@ -56,6 +55,17 @@ def init_db():
             tasks_completed INTEGER DEFAULT 0,
             last_run TEXT,
             rate_limit_until TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS critic_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            score INTEGER DEFAULT 0,
+            strength TEXT DEFAULT '',
+            weakness TEXT DEFAULT '',
+            improvement TEXT DEFAULT '',
+            created_at TEXT NOT NULL
         );
     """)
     conn.commit()
@@ -146,7 +156,6 @@ def get_agent_statuses():
 
 
 def get_recent_topics(limit: int = 20):
-    """Get recently researched topics for memory agent."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT DISTINCT topic FROM results ORDER BY created_at DESC LIMIT ?", (limit,)
@@ -156,13 +165,51 @@ def get_recent_topics(limit: int = 20):
 
 
 def get_recent_contents(limit: int = 5):
-    """Get recent result contents for memory comparison."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT agent, topic, content FROM results ORDER BY created_at DESC LIMIT ?", (limit,)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def save_critic_feedback(agent: str, topic: str, score: int,
+                          strength: str, weakness: str, improvement: str):
+    """Save critic feedback per agent so they can learn from it."""
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO critic_feedback
+           (agent, topic, score, strength, weakness, improvement, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (agent, topic, score, strength, weakness, improvement,
+         datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_critic_feedback_for_agent(agent: str, limit: int = 5) -> list:
+    """Get the last N critic feedback entries for a specific agent."""
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT * FROM critic_feedback
+           WHERE agent = ?
+           ORDER BY created_at DESC LIMIT ?""",
+        (agent, limit)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_agent_average_score(agent: str) -> float:
+    """Get average critic score for an agent."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT AVG(score) as avg FROM critic_feedback WHERE agent = ?",
+        (agent,)
+    ).fetchone()
+    conn.close()
+    return round(row["avg"] or 0, 1)
 
 
 # Initialize on import
