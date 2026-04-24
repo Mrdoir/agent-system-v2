@@ -12,7 +12,7 @@ from pathlib import Path
 
 DB_DIR = "/data" if os.path.exists("/data") else "data"
 Path(DB_DIR).mkdir(exist_ok=True)
-DB_PATH = f"{DB_DIR}/research.db"
+DB_PATH = "/opt/render/project/src/research.db"
 
 
 def get_conn():
