@@ -2,11 +2,11 @@ import os
 import sqlite3
 import json
 from datetime import datetime
-from flask import Flask, render_template, jsonify, Response
+from flask import Flask, render_template, jsonify, Response, request
 
 app = Flask(__name__)
 
-# Always use /data volume on Railway
+# Always use /data volume
 DB_PATH = "/data/research.db"
 
 def get_conn():
@@ -80,6 +80,73 @@ def api_export():
         mimetype="application/json",
         headers={"Content-Disposition": "attachment; filename=research_export.json"}
     )
+
+@app.route("/api/import", methods=["GET", "POST"])
+def api_import():
+    if request.method == "GET":
+        return """
+        <html>
+        <body style="font-family:monospace;background:#0a0a0a;color:#fff;padding:40px;">
+            <h2>📦 Import Research Data</h2>
+            <p>Upload your research_export.json file to restore all results.</p>
+            <form method="post" enctype="multipart/form-data">
+                <input type="file" name="file" accept=".json" style="color:#fff;margin:20px 0;display:block;">
+                <button type="submit" style="background:#6366f1;color:#fff;border:none;padding:12px 24px;cursor:pointer;font-size:16px;">
+                    Import All Results
+                </button>
+            </form>
+        </body>
+        </html>
+        """
+    file = request.files.get("file")
+    if not file:
+        return "No file uploaded", 400
+    try:
+        data = json.loads(file.read())
+        results = data.get("results", [])
+        insights = data.get("insights", [])
+        conn = get_conn()
+        
+        # Import results
+        imported_results = 0
+        for r in results:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO results (agent, topic, content, score, tags, created_at) VALUES (?,?,?,?,?,?)",
+                    (r.get("agent"), r.get("topic"), r.get("content"), 
+                     r.get("score", 0), r.get("tags", "[]"), r.get("created_at"))
+                )
+                imported_results += 1
+            except:
+                pass
+
+        # Import insights
+        imported_insights = 0
+        for i in insights:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO insights (content, source_topics, novelty_score, created_at) VALUES (?,?,?,?)",
+                    (i.get("content"), i.get("source_topics", "[]"),
+                     i.get("novelty_score", 0), i.get("created_at"))
+                )
+                imported_insights += 1
+            except:
+                pass
+
+        conn.commit()
+        conn.close()
+        return f"""
+        <html>
+        <body style="font-family:monospace;background:#0a0a0a;color:#fff;padding:40px;">
+            <h2>✅ Import Complete!</h2>
+            <p>📊 Results imported: {imported_results}</p>
+            <p>🧠 Insights imported: {imported_insights}</p>
+            <a href="/" style="color:#6366f1;">← Back to Dashboard</a>
+        </body>
+        </html>
+        """
+    except Exception as e:
+        return f"❌ Import failed: {str(e)}", 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
