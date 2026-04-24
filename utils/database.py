@@ -1,32 +1,29 @@
 """
-Persistent SQLite database for storing research results.
-Survives redeploys because Railway persists the /data volume.
-Falls back to local DB if volume not available.
+PostgreSQL database for storing research results.
+Uses Render's free PostgreSQL — survives forever, never resets.
 """
 
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 
-DB_DIR = "/data" if os.path.exists("/data") else "data"
-Path(DB_DIR).mkdir(exist_ok=True)
-DB_PATH = "/opt/render/project/src/research.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
 
 def init_db():
     """Create tables if they don't exist."""
     conn = get_conn()
-    conn.executescript("""
+    cur = conn.cursor()
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             agent TEXT NOT NULL,
             topic TEXT NOT NULL,
             content TEXT NOT NULL,
@@ -36,7 +33,7 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS insights (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             content TEXT NOT NULL,
             source_topics TEXT DEFAULT '[]',
             novelty_score INTEGER DEFAULT 0,
@@ -44,8 +41,8 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS do_not_repeat (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pattern TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            pattern TEXT UNIQUE NOT NULL,
             created_at TEXT NOT NULL
         );
 
@@ -58,7 +55,7 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS critic_feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             agent TEXT NOT NULL,
             topic TEXT NOT NULL,
             score INTEGER DEFAULT 0,
@@ -69,147 +66,168 @@ def init_db():
         );
     """)
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def save_result(agent: str, topic: str, content: str, score: int = 0, tags: list = None):
     conn = get_conn()
-    conn.execute(
-        "INSERT INTO results (agent, topic, content, score, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO results (agent, topic, content, score, tags, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
         (agent, topic, content, score, json.dumps(tags or []), datetime.now().isoformat())
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_results(limit: int = 50):
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM results ORDER BY created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT * FROM results ORDER BY created_at DESC LIMIT %s", (limit,))
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def get_total_results():
     conn = get_conn()
-    count = conn.execute("SELECT COUNT(*) FROM results").fetchone()[0]
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM results")
+    count = cur.fetchone()[0]
+    cur.close()
     conn.close()
     return count
 
 
 def save_insight(content: str, source_topics: list, novelty_score: int):
     conn = get_conn()
-    conn.execute(
-        "INSERT INTO insights (content, source_topics, novelty_score, created_at) VALUES (?, ?, ?, ?)",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO insights (content, source_topics, novelty_score, created_at) VALUES (%s, %s, %s, %s)",
         (content, json.dumps(source_topics), novelty_score, datetime.now().isoformat())
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_insights(limit: int = 20):
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM insights ORDER BY novelty_score DESC, created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT * FROM insights ORDER BY novelty_score DESC, created_at DESC LIMIT %s", (limit,))
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def get_do_not_repeat():
     conn = get_conn()
-    rows = conn.execute("SELECT pattern FROM do_not_repeat").fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT pattern FROM do_not_repeat")
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
-    return [r["pattern"] for r in rows]
+    return [r[0] for r in rows]
 
 
 def add_do_not_repeat(pattern: str):
     conn = get_conn()
-    conn.execute(
-        "INSERT OR IGNORE INTO do_not_repeat (pattern, created_at) VALUES (?, ?)",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO do_not_repeat (pattern, created_at) VALUES (%s, %s) ON CONFLICT (pattern) DO NOTHING",
         (pattern, datetime.now().isoformat())
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def update_agent_status(agent: str, status: str, tasks_completed: int = None):
     conn = get_conn()
-    conn.execute("""
+    cur = conn.cursor()
+    cur.execute("""
         INSERT INTO agent_status (agent, status, last_run, tasks_completed)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(agent) DO UPDATE SET
-            status=excluded.status,
-            last_run=excluded.last_run,
-            tasks_completed=COALESCE(excluded.tasks_completed, agent_status.tasks_completed)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (agent) DO UPDATE SET
+            status=EXCLUDED.status,
+            last_run=EXCLUDED.last_run,
+            tasks_completed=COALESCE(EXCLUDED.tasks_completed, agent_status.tasks_completed)
     """, (agent, status, datetime.now().isoformat(), tasks_completed))
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_agent_statuses():
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM agent_status").fetchall()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT * FROM agent_status")
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return {r["agent"]: dict(r) for r in rows}
 
 
 def get_recent_topics(limit: int = 20):
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT DISTINCT topic FROM results ORDER BY created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT topic FROM results ORDER BY topic DESC LIMIT %s", (limit,))
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
-    return [r["topic"] for r in rows]
+    return [r[0] for r in rows]
 
 
 def get_recent_contents(limit: int = 5):
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT agent, topic, content FROM results ORDER BY created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT agent, topic, content FROM results ORDER BY created_at DESC LIMIT %s", (limit,))
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def save_critic_feedback(agent: str, topic: str, score: int,
                           strength: str, weakness: str, improvement: str):
-    """Save critic feedback per agent so they can learn from it."""
     conn = get_conn()
-    conn.execute(
+    cur = conn.cursor()
+    cur.execute(
         """INSERT INTO critic_feedback
            (agent, topic, score, strength, weakness, improvement, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (agent, topic, score, strength, weakness, improvement,
-         datetime.now().isoformat())
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (agent, topic, score, strength, weakness, improvement, datetime.now().isoformat())
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def get_critic_feedback_for_agent(agent: str, limit: int = 5) -> list:
-    """Get the last N critic feedback entries for a specific agent."""
     conn = get_conn()
-    rows = conn.execute(
-        """SELECT * FROM critic_feedback
-           WHERE agent = ?
-           ORDER BY created_at DESC LIMIT ?""",
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        "SELECT * FROM critic_feedback WHERE agent = %s ORDER BY created_at DESC LIMIT %s",
         (agent, limit)
-    ).fetchall()
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def get_agent_average_score(agent: str) -> float:
-    """Get average critic score for an agent."""
     conn = get_conn()
-    row = conn.execute(
-        "SELECT AVG(score) as avg FROM critic_feedback WHERE agent = ?",
-        (agent,)
-    ).fetchone()
+    cur = conn.cursor()
+    cur.execute("SELECT AVG(score) FROM critic_feedback WHERE agent = %s", (agent,))
+    avg = cur.fetchone()[0]
+    cur.close()
     conn.close()
-    return round(row["avg"] or 0, 1)
+    return round(float(avg or 0), 1)
 
 
 # Initialize on import
