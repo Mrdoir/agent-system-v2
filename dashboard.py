@@ -2,7 +2,7 @@ import os
 import sqlite3
 import json
 from datetime import datetime
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, Response
 
 app = Flask(__name__)
 
@@ -63,6 +63,23 @@ def api_stats():
         "agents": agents,
         "last_updated": datetime.now().strftime("%H:%M:%S")
     })
+
+@app.route("/api/export")
+def api_export():
+    results = safe_query("SELECT * FROM results ORDER BY created_at DESC")
+    insights = safe_query("SELECT * FROM insights ORDER BY created_at DESC")
+    export_data = {
+        "exported_at": datetime.now().isoformat(),
+        "total_results": len(results),
+        "total_insights": len(insights),
+        "results": results,
+        "insights": insights
+    }
+    return Response(
+        json.dumps(export_data, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=research_export.json"}
+    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
