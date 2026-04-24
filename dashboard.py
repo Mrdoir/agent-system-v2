@@ -6,8 +6,8 @@ from flask import Flask, render_template, jsonify, Response, request
 
 app = Flask(__name__)
 
-# Always use /data volume
-DB_PATH = "/data/research.db"
+# Render compatible path
+DB_PATH = "/opt/render/project/src/research.db"
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -106,14 +106,34 @@ def api_import():
         results = data.get("results", [])
         insights = data.get("insights", [])
         conn = get_conn()
-        
+
+        # Make sure tables exist
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                content TEXT NOT NULL,
+                score INTEGER DEFAULT 0,
+                tags TEXT DEFAULT '[]',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                source_topics TEXT DEFAULT '[]',
+                novelty_score INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+        """)
+
         # Import results
         imported_results = 0
         for r in results:
             try:
                 conn.execute(
                     "INSERT OR IGNORE INTO results (agent, topic, content, score, tags, created_at) VALUES (?,?,?,?,?,?)",
-                    (r.get("agent"), r.get("topic"), r.get("content"), 
+                    (r.get("agent"), r.get("topic"), r.get("content"),
                      r.get("score", 0), r.get("tags", "[]"), r.get("created_at"))
                 )
                 imported_results += 1
