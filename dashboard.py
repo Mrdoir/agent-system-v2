@@ -1,23 +1,24 @@
 import os
-import sqlite3
 import json
+import psycopg2
+import psycopg2.extras
 from datetime import datetime
 from flask import Flask, render_template, jsonify, Response, request
 
 app = Flask(__name__)
 
-# Render compatible path
-DB_PATH = "/opt/render/project/src/research.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return psycopg2.connect(DATABASE_URL)
 
 def safe_query(query, params=()):
     try:
         conn = get_conn()
-        rows = conn.execute(query, params).fetchall()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        cur.close()
         conn.close()
         return [dict(r) for r in rows]
     except Exception as e:
@@ -27,7 +28,10 @@ def safe_query(query, params=()):
 def safe_count(query):
     try:
         conn = get_conn()
-        count = conn.execute(query).fetchone()[0]
+        cur = conn.cursor()
+        cur.execute(query)
+        count = cur.fetchone()[0]
+        cur.close()
         conn.close()
         return count
     except:
@@ -76,7 +80,7 @@ def api_export():
         "insights": insights
     }
     return Response(
-        json.dumps(export_data, indent=2),
+        json.dumps(export_data, indent=2, default=str),
         mimetype="application/json",
         headers={"Content-Disposition": "attachment; filename=research_export.json"}
     )
@@ -106,54 +110,59 @@ def api_import():
         results = data.get("results", [])
         insights = data.get("insights", [])
         conn = get_conn()
+        cur = conn.cursor()
 
         # Make sure tables exist
-        conn.executescript("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 agent TEXT NOT NULL,
                 topic TEXT NOT NULL,
                 content TEXT NOT NULL,
                 score INTEGER DEFAULT 0,
                 tags TEXT DEFAULT '[]',
                 created_at TEXT NOT NULL
-            );
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS insights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
                 source_topics TEXT DEFAULT '[]',
                 novelty_score INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL
-            );
+            )
         """)
+        conn.commit()
 
         # Import results
         imported_results = 0
         for r in results:
             try:
-                conn.execute(
-                    "INSERT OR IGNORE INTO results (agent, topic, content, score, tags, created_at) VALUES (?,?,?,?,?,?)",
+                cur.execute(
+                    "INSERT INTO results (agent, topic, content, score, tags, created_at) VALUES (%s,%s,%s,%s,%s,%s)",
                     (r.get("agent"), r.get("topic"), r.get("content"),
                      r.get("score", 0), r.get("tags", "[]"), r.get("created_at"))
                 )
                 imported_results += 1
             except:
-                pass
+                conn.rollback()
 
         # Import insights
         imported_insights = 0
         for i in insights:
             try:
-                conn.execute(
-                    "INSERT OR IGNORE INTO insights (content, source_topics, novelty_score, created_at) VALUES (?,?,?,?)",
+                cur.execute(
+                    "INSERT INTO insights (content, source_topics, novelty_score, created_at) VALUES (%s,%s,%s,%s)",
                     (i.get("content"), i.get("source_topics", "[]"),
                      i.get("novelty_score", 0), i.get("created_at"))
                 )
                 imported_insights += 1
             except:
-                pass
+                conn.rollback()
 
         conn.commit()
+        cur.close()
         conn.close()
         return f"""
         <html>
