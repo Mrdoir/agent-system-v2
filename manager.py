@@ -1,6 +1,6 @@
 """
 MANAGER AGENT - The Brain v5
-Sequential pipeline: Scout → Analyst → Diver → Critic → Memory
+Sequential pipeline: Scout → Analyst → Diver → Critic → Memory → Synthesis
 Each agent reads critic feedback from last cycle and improves.
 """
 
@@ -19,6 +19,7 @@ from agents.trend_analyst import TrendAnalyst
 from agents.deep_diver import DeepDiver
 from agents.critic import CriticAgent
 from agents.memory_agent import MemoryAgent
+from agents.synthesis_agent import SynthesisAgent
 from utils.logger import log, log_manager
 from utils.database import (
     init_db, save_result, get_total_results,
@@ -43,10 +44,11 @@ class ManagerAgent:
         }
         self.critic = CriticAgent()
         self.memory = MemoryAgent()
+        self.synthesis = SynthesisAgent()
         self.task_queue = self.state.get("task_queue", [])
         self.completed = self.state.get("completed", [])
         self.last_summary_date = self.state.get("last_summary_date", "")
-        log_manager("Manager v5 — Sequential Pipeline + Critic Feedback Loop")
+        log_manager("Manager v5 — Sequential Pipeline + Critic Feedback Loop + Weekly Synthesis")
 
     def _load_state(self):
         if Path(STATE_FILE).exists():
@@ -111,7 +113,6 @@ class ManagerAgent:
         scout = self.agents["market_scout"]
         if not scout.is_rate_limited():
             log_manager(f"[SCOUT] Researching (with critic feedback applied)...")
-            # Pass agent_name so it loads its own critic feedback
             scout_prompt = scout.build_prompt(topic)
             scout_result = scout.call_api(scout_prompt)
             if scout_result.get("success"):
@@ -179,7 +180,7 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
             log_manager(f"No findings for {topic} — all agents rate limited")
             return {"success": False}
 
-        # STEP 4 — Critic: deep reasoning evaluation + saves per-agent feedback
+        # STEP 4 — Critic
         combined = "\n\n---\n\n".join(all_findings)
         log_manager(f"[CRITIC] Deep reasoning evaluation for: {topic}")
 
@@ -191,7 +192,7 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
                 log_manager(f"[CRITIC] ✓ Overall score: {score}/10 — feedback saved for all agents")
                 notify_high_score("Critic", topic, score, crit_result["text"][:300])
 
-                # STEP 5 — Memory: learns from everything
+                # STEP 5 — Memory
                 if score >= 4 and not self.memory.is_rate_limited():
                     mem_result = self.memory.synthesize(
                         combined + "\n\n" + crit_result["text"], topic
@@ -269,6 +270,7 @@ that neither Scout nor Analyst found. Be specific. Be contrarian. Be deep."""
         self.run_cycle()
         schedule.every(15).minutes.do(self.run_cycle)
         schedule.every().day.at("09:00").do(self.send_daily_summary)
+        schedule.every().sunday.at("09:00").do(self.synthesis.synthesize)
 
         while True:
             schedule.run_pending()
