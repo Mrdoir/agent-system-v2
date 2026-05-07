@@ -4,286 +4,747 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent Research Hub</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0a0a0f;
-    --surface: #111118;
-    --surface2: #1a1a24;
-    --border: #2a2a3a;
-    --accent: #7c6dfa;
-    --accent2: #4ecdc4;
-    --accent3: #f7b731;
-    --text: #e8e8f0;
-    --muted: #6b6b85;
-    --success: #4ecdc4;
-    --warning: #f7b731;
-    --error: #ff6b6b;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
-  body::before {
-    content: '';
-    position: fixed; inset: 0; z-index: 0;
-    background-image:
-      linear-gradient(rgba(124,109,250,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(124,109,250,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-  }
-  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; position: relative; z-index: 1; }
-  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 2.5rem; }
-  .header-left h1 { font-family: 'Space Mono', monospace; font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
-  .header-left h1 span { color: var(--accent); }
-  .header-left p { font-size: 13px; color: var(--muted); margin-top: 4px; font-family: 'Space Mono', monospace; }
-  .live-dot { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--success); font-family: 'Space Mono', monospace; }
-  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.3)} }
-  .stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 2rem; }
-  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; position: relative; overflow: hidden; }
-  .stat-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
-  .stat-card.s1::after { background: var(--accent); }
-  .stat-card.s2::after { background: var(--accent2); }
-  .stat-card.s3::after { background: var(--accent3); }
-  .stat-label { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-  .stat-value { font-size: 32px; font-weight: 600; font-family: 'Space Mono', monospace; }
-  .s1 .stat-value { color: var(--accent); }
-  .s2 .stat-value { color: var(--accent2); }
-  .s3 .stat-value { color: var(--accent3); }
-  .section-title { font-size: 11px; font-family: 'Space Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }
-  .agents { display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; }
-  .agent { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; display: flex; align-items: center; gap: 1rem; transition: border-color 0.2s; }
-  .agent:hover { border-color: var(--accent); }
-  .agent-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
-  .icon-scout { background: rgba(124,109,250,0.15); }
-  .icon-analyst { background: rgba(78,205,196,0.15); }
-  .icon-diver { background: rgba(247,183,49,0.15); }
-  .icon-critic { background: rgba(255,107,107,0.15); }
-  .agent-info { flex: 1; min-width: 0; }
-  .agent-name { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
-  .agent-model { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .badge { font-size: 11px; font-family: 'Space Mono', monospace; padding: 3px 10px; border-radius: 20px; font-weight: 700; }
-  .badge-active { background: rgba(78,205,196,0.15); color: var(--success); border: 1px solid rgba(78,205,196,0.3); }
-  .badge-limit { background: rgba(247,183,49,0.15); color: var(--warning); border: 1px solid rgba(247,183,49,0.3); }
-  .badge-error { background: rgba(255,107,107,0.15); color: var(--error); border: 1px solid rgba(255,107,107,0.3); }
-  .badge-unknown { background: rgba(107,107,133,0.15); color: var(--muted); border: 1px solid rgba(107,107,133,0.3); }
-  .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-  .filter-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 5px 12px; border-radius: 20px; font-family: 'Space Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.2s; }
-  .filter-btn.active { border-color: var(--accent); color: var(--accent); }
-  .results { display: flex; flex-direction: column; gap: 10px; }
-  .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-  .result-header { padding: 1rem 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .result-header:hover { background: var(--surface2); }
-  .result-left { min-width: 0; flex: 1; }
-  .result-title { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .result-meta { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; }
-  .result-score { font-size: 11px; font-family: 'Space Mono', monospace; padding: 2px 8px; border-radius: 10px; background: rgba(124,109,250,0.15); color: var(--accent); flex-shrink: 0; }
-  .result-arrow { color: var(--muted); font-size: 12px; flex-shrink: 0; transition: transform 0.2s; }
-  .result-body { display: none; padding: 1rem 1.25rem; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); line-height: 1.8; white-space: pre-wrap; max-height: 500px; overflow-y: auto; font-family: 'Space Mono', monospace; }
-  .result-card.open .result-arrow { transform: rotate(180deg); }
-  .result-card.open .result-body { display: block; }
-  .empty { text-align: center; padding: 3rem; color: var(--muted); font-size: 13px; font-family: 'Space Mono', monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
-  .empty span { display: block; font-size: 28px; margin-bottom: 12px; }
-  .refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; font-family: 'Space Mono', monospace; font-size: 12px; cursor: pointer; transition: all 0.2s; }
-  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .updated { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; margin-top: 2rem; text-align: center; }
-  @media (max-width: 600px) {
-    .stats { grid-template-columns: 1fr 1fr; }
-    .stats .stat-card:last-child { grid-column: 1/-1; }
-    .header { flex-direction: column; gap: 12px; }
-  }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a0a0f;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── HEADER ─────────────────────────────── */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid #1a1a2e;
+}
+.logo { font-size: 13px; letter-spacing: 0.15em; color: #888; }
+.logo span { color: #7f77dd; }
+.live-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: #1d9e75; letter-spacing: 0.08em;
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #1d9e75;
+  animation: blink 2s infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+/* ── STATS BAR ───────────────────────────── */
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: #1a1a2e;
+  border-bottom: 1px solid #1a1a2e;
+}
+.stat-item {
+  background: #0d0d1a;
+  padding: 14px 20px;
+  text-align: center;
+}
+.stat-num { font-size: 22px; font-weight: bold; }
+.stat-num.purple { color: #7f77dd; }
+.stat-num.teal { color: #1d9e75; }
+.stat-num.amber { color: #ba7517; }
+.stat-num.blue { color: #378add; }
+.stat-lbl { font-size: 10px; color: #555; letter-spacing: 0.08em; margin-top: 2px; }
+
+/* ── MAIN LAYOUT ─────────────────────────── */
+.main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  height: calc(100vh - 110px);
+}
+
+/* ── CANVAS ──────────────────────────────── */
+.canvas-wrap {
+  position: relative;
+  overflow: hidden;
+  background: #080810;
+}
+canvas { display: block; width: 100%; height: 100%; }
+
+/* ── SIDEBAR ─────────────────────────────── */
+.sidebar {
+  background: #0d0d1a;
+  border-left: 1px solid #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-section {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1a1a2e;
+}
+.sidebar-title {
+  font-size: 10px; color: #444; letter-spacing: 0.1em; margin-bottom: 10px;
+}
+.agent-list { display: flex; flex-direction: column; gap: 6px; }
+.agent-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #1a1a2e;
+  background: #0a0a14;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.agent-row:hover { border-color: #2a2a4e; }
+.agent-row.active { border-color: #1d9e7540; background: #0d1a14; }
+.agent-row.limited { border-color: #ba751740; }
+.a-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.a-dot.active { background: #1d9e75; animation: blink 1.5s infinite; }
+.a-dot.limited { background: #ba7517; }
+.a-dot.unknown { background: #333; }
+.a-info { flex: 1; min-width: 0; }
+.a-name { font-size: 12px; color: #ccc; }
+.a-model { font-size: 10px; color: #444; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 3px; flex-shrink: 0;
+}
+.a-badge.active { background: #0f3d2a; color: #1d9e75; }
+.a-badge.limited { background: #3d2a0f; color: #ba7517; }
+.a-badge.unknown { background: #1a1a2e; color: #555; }
+
+.fallback-chain {
+  font-size: 10px; color: #444; padding: 6px 10px 8px;
+  display: none;
+}
+.fallback-chain.show { display: block; }
+.fallback-chain span { color: #7f77dd; }
+
+/* ── FEED ────────────────────────────────── */
+.feed { flex: 1; overflow-y: auto; padding: 10px; }
+.feed::-webkit-scrollbar { width: 3px; }
+.feed::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+.feed-item {
+  display: flex; gap: 8px; padding: 7px 8px; margin-bottom: 4px;
+  border-radius: 5px; background: #0a0a14; border: 1px solid #12122a;
+  font-size: 11px; line-height: 1.5;
+}
+.feed-dot { width: 5px; height: 5px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.feed-text { color: #888; }
+.feed-text strong { color: #ccc; font-weight: normal; }
+.feed-time { font-size: 10px; color: #333; margin-top: 2px; }
+
+/* ── RESULTS PANEL ───────────────────────── */
+.results-panel {
+  background: #0d0d1a;
+  border-top: 1px solid #1a1a2e;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.results-panel::-webkit-scrollbar { width: 3px; }
+.results-panel::-webkit-scrollbar-thumb { background: #222; }
+.rp-header {
+  position: sticky; top: 0;
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 16px; background: #0d0d1a;
+  border-bottom: 1px solid #1a1a2e;
+  z-index: 1;
+}
+.rp-title { font-size: 10px; color: #444; letter-spacing: 0.1em; }
+.filter-btns { display: flex; gap: 4px; margin-left: auto; }
+.fbtn {
+  font-size: 9px; padding: 2px 8px; border-radius: 3px;
+  border: 1px solid #1a1a2e; background: transparent;
+  color: #555; cursor: pointer; font-family: inherit;
+  transition: all 0.15s;
+}
+.fbtn.on { background: #1a1a2e; color: #ccc; border-color: #2a2a4e; }
+.result-item {
+  padding: 10px 16px; border-bottom: 1px solid #0f0f1e;
+  cursor: pointer; transition: background 0.15s;
+}
+.result-item:hover { background: #0f0f1e; }
+.ri-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.ri-agent { font-size: 9px; padding: 1px 6px; border-radius: 2px; }
+.ri-agent.market_scout { background: #0d2040; color: #378add; }
+.ri-agent.trend_analyst { background: #0d3020; color: #1d9e75; }
+.ri-agent.deep_diver { background: #1a1040; color: #7f77dd; }
+.ri-agent.critic { background: #301008; color: #d85a30; }
+.ri-agent.memory { background: #2a1a00; color: #ba7517; }
+.ri-agent.synthesis { background: #2a0818; color: #d4537e; }
+.ri-topic { font-size: 11px; color: #aaa; }
+.ri-score {
+  margin-left: auto; font-size: 10px;
+  padding: 1px 6px; border-radius: 3px;
+}
+.ri-score.high { background: #0f3d2a; color: #1d9e75; }
+.ri-score.mid { background: #3d2a0f; color: #ba7517; }
+.ri-score.low { background: #1a1a2e; color: #555; }
+.ri-preview { font-size: 11px; color: #444; line-height: 1.5; }
+
+/* ── EXPANDED RESULT ─────────────────────── */
+.result-expanded {
+  display: none; position: fixed; inset: 0; z-index: 100;
+  background: #080810ee; backdrop-filter: blur(4px);
+  padding: 40px 20px; overflow-y: auto;
+}
+.result-expanded.show { display: flex; align-items: flex-start; justify-content: center; }
+.result-modal {
+  background: #0d0d1a; border: 1px solid #2a2a4e;
+  border-radius: 10px; padding: 24px; max-width: 700px; width: 100%;
+}
+.modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.modal-close {
+  background: none; border: 1px solid #1a1a2e; color: #666;
+  padding: 4px 10px; border-radius: 4px; cursor: pointer;
+  font-family: inherit; font-size: 12px;
+}
+.modal-close:hover { border-color: #2a2a4e; color: #ccc; }
+.modal-content { font-size: 13px; color: #999; line-height: 1.8; white-space: pre-wrap; }
+
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="header">
-    <div class="header-left">
-      <h1>// <span>AGENT</span> RESEARCH HUB</h1>
-      <p id="last-updated">loading...</p>
+
+<div class="header">
+  <div class="logo">// <span>AGENT</span> RESEARCH HUB <span style="font-size:10px;color:#333;margin-left:8px;">v6 · sequential pipeline</span></div>
+  <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+</div>
+
+<div class="stats-bar">
+  <div class="stat-item">
+    <div class="stat-num purple" id="s-total">—</div>
+    <div class="stat-lbl">RESULTS SAVED</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num teal" id="s-active">—</div>
+    <div class="stat-lbl">ACTIVE AGENTS</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num amber" id="s-topics">—</div>
+    <div class="stat-lbl">TOPICS COVERED</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num blue" id="s-time">—</div>
+    <div class="stat-lbl">LAST UPDATED</div>
+  </div>
+</div>
+
+<div class="main">
+  <div style="display:flex;flex-direction:column;flex:1;min-width:0;">
+    <div class="canvas-wrap" style="flex:1;">
+      <canvas id="c"></canvas>
     </div>
-    <div style="display:flex;align-items:center;gap:12px;">
-      <div class="live-dot"><div class="pulse"></div>LIVE</div>
-      <button class="refresh-btn" onclick="loadAll()">↺ REFRESH</button>
+    <div class="results-panel" id="results-panel">
+      <div class="rp-header">
+        <div class="rp-title">RESEARCH RESULTS</div>
+        <div class="filter-btns" id="filter-btns">
+          <button class="fbtn on" onclick="setFilter('all',this)">All</button>
+          <button class="fbtn" onclick="setFilter('market_scout',this)">Scout</button>
+          <button class="fbtn" onclick="setFilter('trend_analyst',this)">Analyst</button>
+          <button class="fbtn" onclick="setFilter('deep_diver',this)">Diver</button>
+          <button class="fbtn" onclick="setFilter('critic',this)">Critic</button>
+        </div>
+      </div>
+      <div id="results-list"></div>
     </div>
   </div>
 
-  <div class="stats">
-    <div class="stat-card s1">
-      <div class="stat-label">Results saved</div>
-      <div class="stat-value" id="stat-results">—</div>
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">AGENTS</div>
+      <div class="agent-list" id="agent-list"></div>
     </div>
-    <div class="stat-card s2">
-      <div class="stat-label">Active agents</div>
-      <div class="stat-value" id="stat-active">—</div>
-    </div>
-    <div class="stat-card s3">
-      <div class="stat-label">Topics covered</div>
-      <div class="stat-value" id="stat-tasks">—</div>
-    </div>
+    <div class="sidebar-title" style="padding:14px 16px 4px;font-size:10px;color:#444;letter-spacing:0.1em;">LIVE ACTIVITY</div>
+    <div class="feed" id="feed"></div>
   </div>
+</div>
 
-  <div class="section-title">Agents</div>
-  <div class="agents">
-    <div class="agent">
-      <div class="agent-icon icon-scout">🔍</div>
-      <div class="agent-info">
-        <div class="agent-name">Market Scout</div>
-        <div class="agent-model">gemini-2.0-flash · Google AI Studio</div>
+<div class="result-expanded" id="expanded" onclick="closeExpanded(event)">
+  <div class="result-modal" id="modal-inner">
+    <div class="modal-header">
+      <div>
+        <div id="modal-agent" style="font-size:10px;margin-bottom:6px;"></div>
+        <div id="modal-topic" style="font-size:14px;color:#ccc;"></div>
+        <div id="modal-date" style="font-size:11px;color:#444;margin-top:4px;"></div>
       </div>
-      <div class="agent-status">
-        <span class="badge badge-unknown" id="badge-scout">—</span>
-      </div>
+      <button class="modal-close" onclick="closeExpanded()">✕ close</button>
     </div>
-    <div class="agent">
-      <div class="agent-icon icon-analyst">📈</div>
-      <div class="agent-info">
-        <div class="agent-name">Trend Analyst</div>
-        <div class="agent-model">llama-3.3-70b · Groq</div>
-      </div>
-      <div class="agent-status">
-        <span class="badge badge-unknown" id="badge-analyst">—</span>
-      </div>
-    </div>
-    <div class="agent">
-      <div class="agent-icon icon-diver">🧠</div>
-      <div class="agent-info">
-        <div class="agent-name">Deep Diver</div>
-        <div class="agent-model">nvidia/nemotron · OpenRouter</div>
-      </div>
-      <div class="agent-status">
-        <span class="badge badge-unknown" id="badge-diver">—</span>
-      </div>
-    </div>
-    <div class="agent">
-      <div class="agent-icon icon-critic">⚡</div>
-      <div class="agent-info">
-        <div class="agent-name">Critic</div>
-        <div class="agent-model">llama-3.3-70b · Groq</div>
-      </div>
-      <div class="agent-status">
-        <span class="badge badge-unknown" id="badge-critic">—</span>
-      </div>
-    </div>
+    <div class="modal-content" id="modal-content"></div>
   </div>
-
-  <div class="section-title" style="margin-bottom:8px;">Research results</div>
-  <div class="filter-bar">
-    <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
-    <button class="filter-btn" onclick="setFilter('trend_analyst', this)">Trend Analyst</button>
-    <button class="filter-btn" onclick="setFilter('deep_diver', this)">Deep Diver</button>
-    <button class="filter-btn" onclick="setFilter('market_scout', this)">Market Scout</button>
-    <button class="filter-btn" onclick="setFilter('critic', this)">Critic</button>
-  </div>
-  <div class="results" id="results-list">
-    <div class="empty"><span>⏳</span>Loading results...</div>
-  </div>
-
-  <div class="updated" id="footer-updated"></div>
 </div>
 
 <script>
+const AGENTS_DEF = [
+  { key:'market_scout', name:'Market Scout', model:'gemini-2.0-flash · Gemini', color:'#378add', fallbacks:['Primary: Gemini','→ Fallback: Groq'] },
+  { key:'trend_analyst', name:'Trend Analyst', model:'llama-3.3-70b · Groq', color:'#1d9e75', fallbacks:['Primary: Groq','→ Fallback: Gemini'] },
+  { key:'deep_diver', name:'Deep Diver', model:'nemotron · OpenRouter', color:'#7f77dd', fallbacks:['Primary: Nemotron','→ Fallback 1: QwQ-32B','→ Fallback 2: Gemini'] },
+  { key:'critic', name:'Critic', model:'llama-3.3-70b · Groq', color:'#d85a30', fallbacks:['Primary: Groq'] },
+  { key:'memory', name:'Memory', model:'gemini-2.0-flash · Gemini', color:'#ba7517', fallbacks:['Primary: Gemini'] },
+  { key:'synthesis', name:'Synthesis', model:'llama-3.3-70b · Groq · weekly', color:'#d4537e', fallbacks:['Runs every Sunday 09:00'] },
+];
+
+let agentStatuses = {};
 let allResults = [];
-let currentFilter = 'all';
+let activeFilter = 'all';
+let feedItems = [];
 
-async function loadStats() {
-  try {
-    const r = await fetch('/api/stats');
-    const d = await r.json();
-    document.getElementById('stat-results').textContent = d.total_results || '0';
-    document.getElementById('last-updated').textContent = '// last checked ' + d.last_updated;
-    document.getElementById('footer-updated').textContent = 'auto-refreshes every 30s · ' + d.last_updated;
-
-    const agents = d.agents || {};
-    let active = 0;
-
-    const setBadge = (id, state) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.className = 'badge';
-      if (!state) { el.textContent = 'unknown'; el.classList.add('badge-unknown'); return; }
-      const status = (state.status || '').toLowerCase();
-      if (status.includes('rate') || status.includes('limit')) {
-        el.textContent = 'rate limited'; el.classList.add('badge-limit');
-      } else if (status.includes('error')) {
-        el.textContent = 'error'; el.classList.add('badge-error');
-      } else {
-        el.textContent = 'active'; el.classList.add('badge-active'); active++;
-      }
-    };
-
-    setBadge('badge-scout', agents.market_scout || agents.scout);
-    setBadge('badge-analyst', agents.trend_analyst || agents.analyst);
-    setBadge('badge-diver', agents.deep_diver || agents.diver);
-    setBadge('badge-critic', agents.critic);
-
-    document.getElementById('stat-active').textContent = active;
-
-    const topics = new Set(allResults.map(r => r.topic));
-    document.getElementById('stat-tasks').textContent = topics.size || '—';
-  } catch(e) {
-    console.error(e);
-  }
-}
-
-async function loadResults() {
-  try {
-    const r = await fetch('/api/results');
-    allResults = await r.json();
-    renderResults();
-  } catch(e) {
-    document.getElementById('results-list').innerHTML = '<div class="empty"><span>⚠️</span>Could not load results. Check Railway logs.</div>';
-  }
-}
-
-function renderResults() {
-  const list = document.getElementById('results-list');
-  let filtered = currentFilter === 'all' ? allResults : allResults.filter(r => r.agent === currentFilter);
-
-  if (!filtered.length) {
-    list.innerHTML = '<div class="empty"><span>📂</span>No results yet — agents are working...<br>Check back in a few minutes!</div>';
-    return;
-  }
-
-  list.innerHTML = filtered.map(item => {
-    const title = (item.topic || 'Unknown topic').replace(/_/g, ' ');
-    const date = item.created_at ? item.created_at.replace('T', ' ').substring(0, 16) : '';
-    const score = item.score > 0 ? `<span class="result-score">${item.score}/10</span>` : '';
-    const agentLabel = (item.agent || 'unknown').replace(/_/g, ' ');
-    const preview = (item.content || '').substring(0, 300) + '...';
+// ── SIDEBAR AGENTS ─────────────────────────
+function renderAgents() {
+  const el = document.getElementById('agent-list');
+  el.innerHTML = AGENTS_DEF.map(a => {
+    const st = agentStatuses[a.key];
+    const status = st ? st.status : 'unknown';
+    const cls = status === 'active' ? 'active' : status === 'rate_limited' ? 'limited' : 'unknown';
+    const badge = status === 'active' ? 'ACTIVE' : status === 'rate_limited' ? 'LIMITED' : '—';
     return `
-      <div class="result-card" onclick="toggle(this)">
-        <div class="result-header">
-          <div class="result-left">
-            <div class="result-title">${title}</div>
-            <div class="result-meta">${agentLabel} · ${date}</div>
-          </div>
-          ${score}
-          <span class="result-arrow">▾</span>
-        </div>
-        <div class="result-body">${item.content || 'No content'}</div>
+    <div class="agent-row ${cls}" onclick="toggleFallback('fb-${a.key}')">
+      <div class="a-dot ${cls}"></div>
+      <div class="a-info">
+        <div class="a-name">${a.name}</div>
+        <div class="a-model">${a.model}</div>
       </div>
-    `;
+      <div class="a-badge ${cls}">${badge}</div>
+    </div>
+    <div class="fallback-chain" id="fb-${a.key}">${a.fallbacks.map(f => `<span>${f}</span>`).join('<br>')}</div>`;
   }).join('');
 }
 
-function setFilter(agent, btn) {
-  currentFilter = agent;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+function toggleFallback(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('show');
+}
+
+// ── RESULTS ───────────────────────────────
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
   renderResults();
 }
 
-function toggle(el) {
-  el.classList.toggle('open');
+function renderResults() {
+  const filtered = activeFilter === 'all' ? allResults : allResults.filter(r => r.agent === activeFilter);
+  const el = document.getElementById('results-list');
+  el.innerHTML = filtered.slice(0, 40).map((r, i) => {
+    const score = r.score || 0;
+    const sc = score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low';
+    const preview = (r.content || '').replace(/[#*\n]/g,' ').slice(0,120);
+    return `<div class="result-item" onclick="openResult(${i})">
+      <div class="ri-top">
+        <span class="ri-agent ${r.agent}">${r.agent.replace('_',' ')}</span>
+        <span class="ri-topic">${(r.topic||'').slice(0,55)}</span>
+        ${score > 0 ? `<span class="ri-score ${sc}">${score}/10</span>` : ''}
+      </div>
+      <div class="ri-preview">${preview}…</div>
+    </div>`;
+  }).join('');
 }
 
-function loadAll() {
-  loadStats();
-  loadResults();
+function openResult(idx) {
+  const filtered = activeFilter === 'all' ? allResults : allResults.filter(r => r.agent === activeFilter);
+  const r = filtered[idx];
+  if (!r) return;
+  document.getElementById('modal-agent').innerHTML = `<span class="ri-agent ${r.agent}" style="font-size:10px;">${r.agent}</span>`;
+  document.getElementById('modal-topic').textContent = r.topic || '';
+  document.getElementById('modal-date').textContent = r.created_at ? r.created_at.slice(0,16).replace('T',' ') : '';
+  document.getElementById('modal-content').textContent = r.content || '';
+  document.getElementById('expanded').classList.add('show');
 }
 
-loadAll();
-setInterval(loadAll, 30000);
+function closeExpanded(e) {
+  if (!e || e.target === document.getElementById('expanded')) {
+    document.getElementById('expanded').classList.remove('show');
+  }
+}
+
+// ── FEED ──────────────────────────────────
+function addFeed(agent, msg, color) {
+  const now = new Date().toTimeString().slice(0,5);
+  feedItems.unshift({ agent, msg, color, time: now });
+  if (feedItems.length > 30) feedItems.pop();
+  const el = document.getElementById('feed');
+  el.innerHTML = feedItems.map(f => `
+    <div class="feed-item">
+      <div class="feed-dot" style="background:${f.color}"></div>
+      <div>
+        <div class="feed-text"><strong>${f.agent}</strong> ${f.msg}</div>
+        <div class="feed-time">${f.time}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ── CANVAS ANIMATION ──────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const NODE_COLORS = {
+  market_scout: '#378add', trend_analyst: '#1d9e75',
+  deep_diver: '#7f77dd', critic: '#d85a30',
+  memory: '#ba7517', synthesis: '#d4537e', data: '#2a2a4e'
+};
+
+class Robot {
+  constructor(name, x, y, color) {
+    this.name = name; this.x = x; this.y = y; this.color = color;
+    this.tx = x; this.ty = y;
+    this.status = 'unknown';
+    this.pulse = Math.random() * Math.PI * 2;
+    this.carrying = false;
+    this.carryProgress = 0;
+    this.label = '';
+    this.platform = { x, y: y + 28, w: 90, h: 10 };
+  }
+
+  setTarget(tx, ty) { this.tx = tx; this.ty = ty; }
+
+  update() {
+    this.pulse += 0.04;
+    const dx = this.tx - this.x, dy = this.ty - this.y;
+    const spd = 1.5;
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+      this.x += Math.sign(dx) * Math.min(spd, Math.abs(dx));
+      this.y += Math.sign(dy) * Math.min(spd, Math.abs(dy));
+    }
+    this.platform.x = this.x;
+    this.platform.y = this.y + 28;
+  }
+
+  draw(ctx) {
+    const { x, y, color, status, pulse } = this;
+    const glow = status === 'active' ? 0.5 + 0.3 * Math.sin(pulse) : 0.15;
+    const limited = status === 'rate_limited';
+
+    ctx.save();
+    ctx.globalAlpha = limited ? 0.35 : 0.95;
+
+    // Platform
+    ctx.fillStyle = '#12122a';
+    ctx.strokeStyle = color + '40';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x - 45, y + 26, 90, 12, 3);
+    ctx.fill(); ctx.stroke();
+
+    // Body
+    ctx.fillStyle = '#0d0d1a';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x - 16, y - 14, 32, 28, 5);
+    ctx.fill(); ctx.stroke();
+
+    // Head
+    ctx.beginPath();
+    ctx.roundRect(x - 12, y - 28, 24, 16, 4);
+    ctx.fill(); ctx.stroke();
+
+    // Eyes
+    ctx.fillStyle = color;
+    ctx.globalAlpha = glow + 0.3;
+    ctx.beginPath(); ctx.arc(x - 5, y - 21, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 5, y - 21, 2.5, 0, Math.PI * 2); ctx.fill();
+
+    // Legs
+    ctx.globalAlpha = limited ? 0.2 : 0.7;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    const legSwing = status === 'active' ? Math.sin(pulse * 2) * 5 : 0;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, y + 14); ctx.lineTo(x - 6 - legSwing, y + 26); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y + 14); ctx.lineTo(x + 6 + legSwing, y + 26); ctx.stroke();
+
+    // Arms
+    const armSwing = status === 'active' ? Math.sin(pulse * 2 + 1) * 8 : 0;
+    ctx.beginPath();
+    ctx.moveTo(x - 16, y - 4); ctx.lineTo(x - 24 - armSwing, y + 4); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + 16, y - 4); ctx.lineTo(x + 24 + armSwing, y + 4); ctx.stroke();
+
+    // Status light
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = status === 'active' ? '#1d9e75' : status === 'rate_limited' ? '#ba7517' : '#333';
+    ctx.beginPath(); ctx.arc(x + 10, y - 6, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Name label
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#888';
+    ctx.font = '9px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(this.name, x, y + 44);
+
+    ctx.restore();
+  }
+}
+
+class DataParticle {
+  constructor(x, y, tx, ty, color) {
+    this.x = x; this.y = y; this.sx = x; this.sy = y;
+    this.tx = tx; this.ty = ty;
+    this.color = color;
+    this.progress = 0; this.speed = 0.008 + Math.random() * 0.006;
+    this.done = false; this.size = 3 + Math.random() * 2;
+  }
+  update() {
+    this.progress += this.speed;
+    if (this.progress >= 1) { this.done = true; return; }
+    this.x = this.sx + (this.tx - this.sx) * this.progress;
+    this.y = this.sy + (this.ty - this.sy) * this.progress - Math.sin(this.progress * Math.PI) * 40;
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.globalAlpha = 1 - this.progress * 0.5;
+    ctx.fillStyle = this.color;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class KnowledgeNode {
+  constructor(x, y, label, color) {
+    this.x = x; this.y = y; this.label = label; this.color = color;
+    this.r = 6 + Math.random() * 8;
+    this.pulse = Math.random() * Math.PI * 2;
+    this.connections = [];
+    this.age = 0;
+  }
+  update() { this.pulse += 0.02; this.age++; }
+  draw(ctx) {
+    this.pulse += 0;
+    const alpha = Math.min(1, this.age / 60);
+    ctx.save();
+    ctx.globalAlpha = alpha * (0.5 + 0.2 * Math.sin(this.pulse));
+    ctx.fillStyle = this.color + '30';
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.fillStyle = this.color;
+    ctx.font = '8px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(this.label.slice(0, 12), this.x, this.y + this.r + 10);
+    ctx.restore();
+  }
+}
+
+// Setup robots
+let robots = [];
+let particles = [];
+let knowledgeNodes = [];
+let frameCount = 0;
+
+function initRobots() {
+  const W = canvas.width, H = canvas.height;
+  const positions = [
+    { name: 'Scout', x: W * 0.15, y: H * 0.3, key: 'market_scout' },
+    { name: 'Analyst', x: W * 0.35, y: H * 0.55, key: 'trend_analyst' },
+    { name: 'Diver', x: W * 0.55, y: H * 0.3, key: 'deep_diver' },
+    { name: 'Critic', x: W * 0.75, y: H * 0.55, key: 'critic' },
+    { name: 'Memory', x: W * 0.85, y: H * 0.25, key: 'memory' },
+    { name: 'Synth', x: W * 0.5, y: H * 0.75, key: 'synthesis' },
+  ];
+  robots = positions.map(p => {
+    const r = new Robot(p.name, p.x, p.y, NODE_COLORS[p.key]);
+    r.key = p.key;
+    return r;
+  });
+}
+
+function spawnParticle(fromKey, toKey) {
+  const from = robots.find(r => r.key === fromKey);
+  const to = robots.find(r => r.key === toKey);
+  if (!from || !to) return;
+  particles.push(new DataParticle(from.x, from.y - 10, to.x, to.y - 10, NODE_COLORS[fromKey]));
+}
+
+function spawnKnowledgeNode(topic, agentKey) {
+  const W = canvas.width, H = canvas.height;
+  const x = 60 + Math.random() * (W - 120);
+  const y = 60 + Math.random() * (H - 120);
+  const node = new KnowledgeNode(x, y, topic, NODE_COLORS[agentKey] || '#2a2a4e');
+
+  // Connect to nearby nodes
+  knowledgeNodes.forEach(n => {
+    const dx = n.x - x, dy = n.y - y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 120 && Math.random() < 0.4) {
+      node.connections.push(n);
+    }
+  });
+
+  knowledgeNodes.push(node);
+  if (knowledgeNodes.length > 60) knowledgeNodes.shift();
+}
+
+function drawConnections() {
+  knowledgeNodes.forEach(node => {
+    node.connections.forEach(other => {
+      ctx.save();
+      ctx.strokeStyle = node.color + '18';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([3, 5]);
+      ctx.beginPath();
+      ctx.moveTo(node.x, node.y);
+      ctx.lineTo(other.x, other.y);
+      ctx.stroke();
+      ctx.restore();
+    });
+  });
+}
+
+function drawPipelineLines() {
+  const pipeline = [
+    ['market_scout', 'trend_analyst'],
+    ['trend_analyst', 'deep_diver'],
+    ['deep_diver', 'critic'],
+    ['critic', 'memory'],
+    ['critic', 'synthesis'],
+  ];
+  pipeline.forEach(([a, b]) => {
+    const ra = robots.find(r => r.key === a);
+    const rb = robots.find(r => r.key === b);
+    if (!ra || !rb) return;
+    ctx.save();
+    ctx.strokeStyle = '#1a1a3a';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 8]);
+    ctx.beginPath();
+    ctx.moveTo(ra.x, ra.y - 10);
+    ctx.lineTo(rb.x, rb.y - 10);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function loop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Grid dots
+  ctx.fillStyle = '#12122a';
+  for (let x = 0; x < canvas.width; x += 30) {
+    for (let y = 0; y < canvas.height; y += 30) {
+      ctx.beginPath(); ctx.arc(x, y, 0.5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  drawConnections();
+  drawPipelineLines();
+
+  knowledgeNodes.forEach(n => { n.update(); n.draw(ctx); });
+  particles = particles.filter(p => !p.done);
+  particles.forEach(p => { p.update(); p.draw(ctx); });
+  robots.forEach(r => { r.update(); r.draw(ctx); });
+
+  // Spawn particles along active pipeline
+  frameCount++;
+  if (frameCount % 120 === 0) {
+    const activeRobots = robots.filter(r => r.status === 'active');
+    if (activeRobots.length > 0) {
+      const pipeline = [
+        ['market_scout','trend_analyst'],
+        ['trend_analyst','deep_diver'],
+        ['deep_diver','critic'],
+        ['critic','memory'],
+      ];
+      pipeline.forEach(([a, b]) => {
+        const ra = robots.find(r => r.key === a);
+        if (ra && ra.status === 'active') spawnParticle(a, b);
+      });
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// ── DATA FETCHING ─────────────────────────
+async function fetchStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    document.getElementById('s-total').textContent = (d.total_results || 0).toLocaleString();
+    document.getElementById('s-active').textContent = d.active_agents || 0;
+    document.getElementById('s-time').textContent = d.last_updated || '—';
+
+    agentStatuses = d.agents || {};
+    AGENTS_DEF.forEach(a => {
+      const robot = robots.find(r => r.key === a.key);
+      const st = agentStatuses[a.key];
+      if (robot && st) {
+        const prev = robot.status;
+        robot.status = st.status || 'unknown';
+        if (prev !== 'active' && robot.status === 'active') {
+          addFeed(a.name, 'back online ✓', a.color);
+        }
+        if (prev === 'active' && robot.status === 'rate_limited') {
+          addFeed(a.name, 'hit rate limit — switching fallback', a.color);
+        }
+      }
+    });
+
+    const active = Object.values(agentStatuses).filter(s => s.status === 'active').length;
+    document.getElementById('s-active').textContent = active;
+    renderAgents();
+  } catch(e) { console.log('stats error', e); }
+}
+
+async function fetchResults() {
+  try {
+    const r = await fetch('/api/results');
+    const data = await r.json();
+    const prev = allResults.length;
+    allResults = data;
+
+    // Count unique topics
+    const topics = new Set(data.map(r => r.topic));
+    document.getElementById('s-topics').textContent = topics.size;
+
+    // New results → spawn knowledge nodes
+    if (data.length > prev && prev > 0) {
+      const newest = data[0];
+      const agentKey = newest.agent || 'data';
+      spawnKnowledgeNode(newest.topic || 'research', agentKey);
+      addFeed(
+        AGENTS_DEF.find(a => a.key === agentKey)?.name || newest.agent,
+        `completed "${(newest.topic||'').slice(0,35)}"`,
+        NODE_COLORS[agentKey] || '#7f77dd'
+      );
+    } else if (knowledgeNodes.length === 0 && data.length > 0) {
+      // Seed initial nodes
+      data.slice(0, 15).forEach((r, i) => {
+        setTimeout(() => spawnKnowledgeNode(r.topic || 'research', r.agent || 'data'), i * 100);
+      });
+    }
+
+    renderResults();
+  } catch(e) { console.log('results error', e); }
+}
+
+// ── BOOT ──────────────────────────────────
+initRobots();
+loop();
+
+fetchStats();
+fetchResults();
+addFeed('System', 'Agent Research Hub online', '#7f77dd');
+addFeed('Manager', 'Sequential pipeline active: Scout→Analyst→Diver→Critic→Memory', '#1d9e75');
+
+setInterval(fetchStats, 15000);
+setInterval(fetchResults, 30000);
+window.addEventListener('resize', () => { resize(); initRobots(); });
 </script>
 </body>
 </html>
