@@ -6,7 +6,7 @@
 <title>Agent Research Hub</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-
+ 
 body {
   background: #0a0a0f;
   color: #e0e0e0;
@@ -14,7 +14,7 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
 }
-
+ 
 /* ── HEADER ─────────────────────────────── */
 .header {
   display: flex;
@@ -35,7 +35,7 @@ body {
   animation: blink 2s infinite;
 }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
+ 
 /* ── STATS BAR ───────────────────────────── */
 .stats-bar {
   display: grid;
@@ -55,14 +55,14 @@ body {
 .stat-num.amber { color: #ba7517; }
 .stat-num.blue { color: #378add; }
 .stat-lbl { font-size: 10px; color: #555; letter-spacing: 0.08em; margin-top: 2px; }
-
+ 
 /* ── MAIN LAYOUT ─────────────────────────── */
 .main {
   display: grid;
   grid-template-columns: 1fr 320px;
   height: calc(100vh - 110px);
 }
-
+ 
 /* ── CANVAS ──────────────────────────────── */
 .canvas-wrap {
   position: relative;
@@ -70,7 +70,7 @@ body {
   background: #080810;
 }
 canvas { display: block; width: 100%; height: 100%; }
-
+ 
 /* ── SIDEBAR ─────────────────────────────── */
 .sidebar {
   background: #0d0d1a;
@@ -112,14 +112,14 @@ canvas { display: block; width: 100%; height: 100%; }
 .a-badge.active { background: #0f3d2a; color: #1d9e75; }
 .a-badge.limited { background: #3d2a0f; color: #ba7517; }
 .a-badge.unknown { background: #1a1a2e; color: #555; }
-
+ 
 .fallback-chain {
   font-size: 10px; color: #444; padding: 6px 10px 8px;
   display: none;
 }
 .fallback-chain.show { display: block; }
 .fallback-chain span { color: #7f77dd; }
-
+ 
 /* ── FEED ────────────────────────────────── */
 .feed { flex: 1; overflow-y: auto; padding: 10px; }
 .feed::-webkit-scrollbar { width: 3px; }
@@ -133,7 +133,7 @@ canvas { display: block; width: 100%; height: 100%; }
 .feed-text { color: #888; }
 .feed-text strong { color: #ccc; font-weight: normal; }
 .feed-time { font-size: 10px; color: #333; margin-top: 2px; }
-
+ 
 /* ── RESULTS PANEL ───────────────────────── */
 .results-panel {
   background: #0d0d1a;
@@ -181,7 +181,7 @@ canvas { display: block; width: 100%; height: 100%; }
 .ri-score.mid { background: #3d2a0f; color: #ba7517; }
 .ri-score.low { background: #1a1a2e; color: #555; }
 .ri-preview { font-size: 11px; color: #444; line-height: 1.5; }
-
+ 
 /* ── EXPANDED RESULT ─────────────────────── */
 .result-expanded {
   display: none; position: fixed; inset: 0; z-index: 100;
@@ -201,16 +201,16 @@ canvas { display: block; width: 100%; height: 100%; }
 }
 .modal-close:hover { border-color: #2a2a4e; color: #ccc; }
 .modal-content { font-size: 13px; color: #999; line-height: 1.8; white-space: pre-wrap; }
-
+ 
 </style>
 </head>
 <body>
-
+ 
 <div class="header">
   <div class="logo">// <span>AGENT</span> RESEARCH HUB <span style="font-size:10px;color:#333;margin-left:8px;">v6 · sequential pipeline</span></div>
-  <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+  <div class="live-badge"><div class="live-dot"></div>LIVE <span id="tick" style="color:#1a3a2a;font-size:10px;margin-left:4px;"></span></div>
 </div>
-
+ 
 <div class="stats-bar">
   <div class="stat-item">
     <div class="stat-num purple" id="s-total">—</div>
@@ -229,7 +229,7 @@ canvas { display: block; width: 100%; height: 100%; }
     <div class="stat-lbl">LAST UPDATED</div>
   </div>
 </div>
-
+ 
 <div class="main">
   <div style="display:flex;flex-direction:column;flex:1;min-width:0;">
     <div class="canvas-wrap" style="flex:1;">
@@ -249,7 +249,7 @@ canvas { display: block; width: 100%; height: 100%; }
       <div id="results-list"></div>
     </div>
   </div>
-
+ 
   <div class="sidebar">
     <div class="sidebar-section">
       <div class="sidebar-title">AGENTS</div>
@@ -259,7 +259,7 @@ canvas { display: block; width: 100%; height: 100%; }
     <div class="feed" id="feed"></div>
   </div>
 </div>
-
+ 
 <div class="result-expanded" id="expanded" onclick="closeExpanded(event)">
   <div class="result-modal" id="modal-inner">
     <div class="modal-header">
@@ -273,7 +273,7 @@ canvas { display: block; width: 100%; height: 100%; }
     <div class="modal-content" id="modal-content"></div>
   </div>
 </div>
-
+ 
 <script>
 const AGENTS_DEF = [
   { key:'market_scout', name:'Market Scout', model:'gemini-2.0-flash · Gemini', color:'#378add', fallbacks:['Primary: Gemini','→ Fallback: Groq'] },
@@ -283,12 +283,12 @@ const AGENTS_DEF = [
   { key:'memory', name:'Memory', model:'gemini-2.0-flash · Gemini', color:'#ba7517', fallbacks:['Primary: Gemini'] },
   { key:'synthesis', name:'Synthesis', model:'llama-3.3-70b · Groq · weekly', color:'#d4537e', fallbacks:['Runs every Sunday 09:00'] },
 ];
-
+ 
 let agentStatuses = {};
 let allResults = [];
 let activeFilter = 'all';
 let feedItems = [];
-
+ 
 // ── SIDEBAR AGENTS ─────────────────────────
 function renderAgents() {
   const el = document.getElementById('agent-list');
@@ -309,12 +309,12 @@ function renderAgents() {
     <div class="fallback-chain" id="fb-${a.key}">${a.fallbacks.map(f => `<span>${f}</span>`).join('<br>')}</div>`;
   }).join('');
 }
-
+ 
 function toggleFallback(id) {
   const el = document.getElementById(id);
   el.classList.toggle('show');
 }
-
+ 
 // ── RESULTS ───────────────────────────────
 function setFilter(f, btn) {
   activeFilter = f;
@@ -322,7 +322,7 @@ function setFilter(f, btn) {
   btn.classList.add('on');
   renderResults();
 }
-
+ 
 function renderResults() {
   const filtered = activeFilter === 'all' ? allResults : allResults.filter(r => r.agent === activeFilter);
   const el = document.getElementById('results-list');
@@ -340,7 +340,7 @@ function renderResults() {
     </div>`;
   }).join('');
 }
-
+ 
 function openResult(idx) {
   const filtered = activeFilter === 'all' ? allResults : allResults.filter(r => r.agent === activeFilter);
   const r = filtered[idx];
@@ -351,13 +351,13 @@ function openResult(idx) {
   document.getElementById('modal-content').textContent = r.content || '';
   document.getElementById('expanded').classList.add('show');
 }
-
+ 
 function closeExpanded(e) {
   if (!e || e.target === document.getElementById('expanded')) {
     document.getElementById('expanded').classList.remove('show');
   }
 }
-
+ 
 // ── FEED ──────────────────────────────────
 function addFeed(agent, msg, color) {
   const now = new Date().toTimeString().slice(0,5);
@@ -373,24 +373,24 @@ function addFeed(agent, msg, color) {
       </div>
     </div>`).join('');
 }
-
+ 
 // ── CANVAS ANIMATION ──────────────────────
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-
+ 
 function resize() {
   canvas.width = canvas.offsetWidth;
   canvas.height = canvas.offsetHeight;
 }
 resize();
 window.addEventListener('resize', resize);
-
+ 
 const NODE_COLORS = {
   market_scout: '#378add', trend_analyst: '#1d9e75',
   deep_diver: '#7f77dd', critic: '#d85a30',
   memory: '#ba7517', synthesis: '#d4537e', data: '#2a2a4e'
 };
-
+ 
 class Robot {
   constructor(name, x, y, color) {
     this.name = name; this.x = x; this.y = y; this.color = color;
@@ -402,9 +402,9 @@ class Robot {
     this.label = '';
     this.platform = { x, y: y + 28, w: 90, h: 10 };
   }
-
+ 
   setTarget(tx, ty) { this.tx = tx; this.ty = ty; }
-
+ 
   update() {
     this.pulse += 0.04;
     const dx = this.tx - this.x, dy = this.ty - this.y;
@@ -416,15 +416,15 @@ class Robot {
     this.platform.x = this.x;
     this.platform.y = this.y + 28;
   }
-
+ 
   draw(ctx) {
     const { x, y, color, status, pulse } = this;
     const glow = status === 'active' ? 0.5 + 0.3 * Math.sin(pulse) : 0.15;
     const limited = status === 'rate_limited';
-
+ 
     ctx.save();
     ctx.globalAlpha = limited ? 0.35 : 0.95;
-
+ 
     // Platform
     ctx.fillStyle = '#12122a';
     ctx.strokeStyle = color + '40';
@@ -432,7 +432,7 @@ class Robot {
     ctx.beginPath();
     ctx.roundRect(x - 45, y + 26, 90, 12, 3);
     ctx.fill(); ctx.stroke();
-
+ 
     // Body
     ctx.fillStyle = '#0d0d1a';
     ctx.strokeStyle = color;
@@ -440,18 +440,18 @@ class Robot {
     ctx.beginPath();
     ctx.roundRect(x - 16, y - 14, 32, 28, 5);
     ctx.fill(); ctx.stroke();
-
+ 
     // Head
     ctx.beginPath();
     ctx.roundRect(x - 12, y - 28, 24, 16, 4);
     ctx.fill(); ctx.stroke();
-
+ 
     // Eyes
     ctx.fillStyle = color;
     ctx.globalAlpha = glow + 0.3;
     ctx.beginPath(); ctx.arc(x - 5, y - 21, 2.5, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(x + 5, y - 21, 2.5, 0, Math.PI * 2); ctx.fill();
-
+ 
     // Legs
     ctx.globalAlpha = limited ? 0.2 : 0.7;
     ctx.strokeStyle = color;
@@ -461,30 +461,30 @@ class Robot {
     ctx.moveTo(x - 6, y + 14); ctx.lineTo(x - 6 - legSwing, y + 26); ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(x + 6, y + 14); ctx.lineTo(x + 6 + legSwing, y + 26); ctx.stroke();
-
+ 
     // Arms
     const armSwing = status === 'active' ? Math.sin(pulse * 2 + 1) * 8 : 0;
     ctx.beginPath();
     ctx.moveTo(x - 16, y - 4); ctx.lineTo(x - 24 - armSwing, y + 4); ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(x + 16, y - 4); ctx.lineTo(x + 24 + armSwing, y + 4); ctx.stroke();
-
+ 
     // Status light
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = status === 'active' ? '#1d9e75' : status === 'rate_limited' ? '#ba7517' : '#333';
     ctx.beginPath(); ctx.arc(x + 10, y - 6, 3, 0, Math.PI * 2); ctx.fill();
-
+ 
     // Name label
     ctx.globalAlpha = 0.7;
     ctx.fillStyle = '#888';
     ctx.font = '9px Courier New';
     ctx.textAlign = 'center';
     ctx.fillText(this.name, x, y + 44);
-
+ 
     ctx.restore();
   }
 }
-
+ 
 class DataParticle {
   constructor(x, y, tx, ty, color) {
     this.x = x; this.y = y; this.sx = x; this.sy = y;
@@ -511,7 +511,7 @@ class DataParticle {
     ctx.restore();
   }
 }
-
+ 
 class KnowledgeNode {
   constructor(x, y, label, color) {
     this.x = x; this.y = y; this.label = label; this.color = color;
@@ -524,29 +524,52 @@ class KnowledgeNode {
   draw(ctx) {
     this.pulse += 0;
     const alpha = Math.min(1, this.age / 60);
+    const glow = 0.4 + 0.15 * Math.sin(this.pulse);
     ctx.save();
-    ctx.globalAlpha = alpha * (0.5 + 0.2 * Math.sin(this.pulse));
-    ctx.fillStyle = this.color + '30';
-    ctx.strokeStyle = this.color;
-    ctx.lineWidth = 0.5;
+ 
+    // Glow ring
+    ctx.globalAlpha = alpha * 0.12;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r + 5, 0, Math.PI * 2);
+    ctx.fill();
+ 
+    // Main circle
+    ctx.globalAlpha = alpha * glow;
+    ctx.fillStyle = this.color + '25';
+    ctx.strokeStyle = this.color + '90';
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
-    ctx.globalAlpha = alpha * 0.6;
+ 
+    // Label background pill
+    const label = this.label;
+    const lw = label.length * 5.5 + 8;
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.fillStyle = '#0a0a14';
+    ctx.strokeStyle = this.color + '40';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.roundRect(this.x - lw/2, this.y + this.r + 3, lw, 13, 3);
+    ctx.fill(); ctx.stroke();
+ 
+    // Label text
     ctx.fillStyle = this.color;
     ctx.font = '8px Courier New';
     ctx.textAlign = 'center';
-    ctx.fillText(this.label.slice(0, 12), this.x, this.y + this.r + 10);
+    ctx.fillText(label, this.x, this.y + this.r + 12);
+ 
     ctx.restore();
   }
 }
-
+ 
 // Setup robots
 let robots = [];
 let particles = [];
 let knowledgeNodes = [];
 let frameCount = 0;
-
+ 
 function initRobots() {
   const W = canvas.width, H = canvas.height;
   const positions = [
@@ -563,33 +586,49 @@ function initRobots() {
     return r;
   });
 }
-
+ 
 function spawnParticle(fromKey, toKey) {
   const from = robots.find(r => r.key === fromKey);
   const to = robots.find(r => r.key === toKey);
   if (!from || !to) return;
   particles.push(new DataParticle(from.x, from.y - 10, to.x, to.y - 10, NODE_COLORS[fromKey]));
 }
-
+ 
+// Clean topic label — strip year/date clutter, keep core keywords
+function cleanLabel(topic) {
+  return (topic || '')
+    .replace(/20\d\d[-–]\d{4}/g, '')
+    .replace(/20\d\d/g, '')
+    .replace(/apps?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 18);
+}
+ 
 function spawnKnowledgeNode(topic, agentKey) {
   const W = canvas.width, H = canvas.height;
-  const x = 60 + Math.random() * (W - 120);
-  const y = 60 + Math.random() * (H - 120);
-  const node = new KnowledgeNode(x, y, topic, NODE_COLORS[agentKey] || '#2a2a4e');
-
-  // Connect to nearby nodes
+  // Keep nodes away from sidebar and edges
+  const x = 60 + Math.random() * (W - 200);
+  const y = 60 + Math.random() * (H - 160);
+  const label = cleanLabel(topic);
+  const node = new KnowledgeNode(x, y, label, NODE_COLORS[agentKey] || '#2a2a4e');
+ 
+  // Connect to nearby nodes — prefer same color (same agent)
   knowledgeNodes.forEach(n => {
     const dx = n.x - x, dy = n.y - y;
     const dist = Math.sqrt(dx*dx + dy*dy);
-    if (dist < 120 && Math.random() < 0.4) {
+    const sameAgent = n.color === node.color;
+    const threshold = sameAgent ? 160 : 100;
+    const chance = sameAgent ? 0.6 : 0.25;
+    if (dist < threshold && Math.random() < chance) {
       node.connections.push(n);
     }
   });
-
+ 
   knowledgeNodes.push(node);
-  if (knowledgeNodes.length > 60) knowledgeNodes.shift();
+  if (knowledgeNodes.length > 80) knowledgeNodes.shift();
 }
-
+ 
 function drawConnections() {
   knowledgeNodes.forEach(node => {
     node.connections.forEach(other => {
@@ -605,7 +644,7 @@ function drawConnections() {
     });
   });
 }
-
+ 
 function drawPipelineLines() {
   const pipeline = [
     ['market_scout', 'trend_analyst'],
@@ -629,10 +668,10 @@ function drawPipelineLines() {
     ctx.restore();
   });
 }
-
+ 
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+ 
   // Grid dots
   ctx.fillStyle = '#12122a';
   for (let x = 0; x < canvas.width; x += 30) {
@@ -640,36 +679,52 @@ function loop() {
       ctx.beginPath(); ctx.arc(x, y, 0.5, 0, Math.PI * 2); ctx.fill();
     }
   }
-
+ 
   drawConnections();
   drawPipelineLines();
-
+ 
   knowledgeNodes.forEach(n => { n.update(); n.draw(ctx); });
   particles = particles.filter(p => !p.done);
   particles.forEach(p => { p.update(); p.draw(ctx); });
   robots.forEach(r => { r.update(); r.draw(ctx); });
-
-  // Spawn particles along active pipeline
+ 
+  // Spawn particles — more frequent, smarter routing
   frameCount++;
-  if (frameCount % 120 === 0) {
-    const activeRobots = robots.filter(r => r.status === 'active');
-    if (activeRobots.length > 0) {
-      const pipeline = [
-        ['market_scout','trend_analyst'],
-        ['trend_analyst','deep_diver'],
-        ['deep_diver','critic'],
-        ['critic','memory'],
-      ];
-      pipeline.forEach(([a, b]) => {
-        const ra = robots.find(r => r.key === a);
-        if (ra && ra.status === 'active') spawnParticle(a, b);
-      });
+  const pipeline = [
+    ['market_scout','trend_analyst'],
+    ['trend_analyst','deep_diver'],
+    ['deep_diver','critic'],
+    ['critic','memory'],
+    ['critic','synthesis'],
+    ['memory','market_scout'],
+  ];
+ 
+  // Fast particles when active (every 45 frames), slow when limited (every 180)
+  pipeline.forEach(([a, b], i) => {
+    const ra = robots.find(r => r.key === a);
+    const rb = robots.find(r => r.key === b);
+    if (!ra || !rb) return;
+    const interval = ra.status === 'active' ? 45 : 180;
+    const offset = i * 15; // stagger so they dont all fire at once
+    if ((frameCount + offset) % interval === 0) {
+      // Spawn 2 particles when active, 1 when limited
+      const count = ra.status === 'active' ? 2 : 1;
+      for (let c = 0; c < count; c++) {
+        setTimeout(() => spawnParticle(a, b), c * 200);
+      }
     }
+  });
+ 
+  // Random "memory recall" particles — memory fires back to any agent
+  if (frameCount % 90 === 0) {
+    const targets = ['market_scout', 'trend_analyst', 'deep_diver'];
+    const target = targets[Math.floor(Math.random() * targets.length)];
+    spawnParticle('memory', target);
   }
-
+ 
   requestAnimationFrame(loop);
 }
-
+ 
 // ── DATA FETCHING ─────────────────────────
 async function fetchStats() {
   try {
@@ -678,7 +733,7 @@ async function fetchStats() {
     document.getElementById('s-total').textContent = (d.total_results || 0).toLocaleString();
     document.getElementById('s-active').textContent = d.active_agents || 0;
     document.getElementById('s-time').textContent = d.last_updated || '—';
-
+ 
     agentStatuses = d.agents || {};
     AGENTS_DEF.forEach(a => {
       const robot = robots.find(r => r.key === a.key);
@@ -694,24 +749,32 @@ async function fetchStats() {
         }
       }
     });
-
+ 
     const active = Object.values(agentStatuses).filter(s => s.status === 'active').length;
     document.getElementById('s-active').textContent = active;
     renderAgents();
   } catch(e) { console.log('stats error', e); }
+ 
+  // Tick indicator so user knows it's live
+  const tick = document.getElementById('tick');
+  if (tick) {
+    tick.textContent = '●';
+    tick.style.color = '#1d9e75';
+    setTimeout(() => { tick.textContent = ''; }, 500);
+  }
 }
-
+ 
 async function fetchResults() {
   try {
     const r = await fetch('/api/results');
     const data = await r.json();
     const prev = allResults.length;
     allResults = data;
-
+ 
     // Count unique topics
     const topics = new Set(data.map(r => r.topic));
     document.getElementById('s-topics').textContent = topics.size;
-
+ 
     // New results → spawn knowledge nodes
     if (data.length > prev && prev > 0) {
       const newest = data[0];
@@ -728,22 +791,30 @@ async function fetchResults() {
         setTimeout(() => spawnKnowledgeNode(r.topic || 'research', r.agent || 'data'), i * 100);
       });
     }
-
+ 
     renderResults();
   } catch(e) { console.log('results error', e); }
 }
-
+ 
 // ── BOOT ──────────────────────────────────
 initRobots();
 loop();
-
+ 
 fetchStats();
 fetchResults();
 addFeed('System', 'Agent Research Hub online', '#7f77dd');
 addFeed('Manager', 'Sequential pipeline active: Scout→Analyst→Diver→Critic→Memory', '#1d9e75');
-
-setInterval(fetchStats, 15000);
-setInterval(fetchResults, 30000);
+ 
+// Real-time feel — fast polling
+setInterval(fetchStats, 5000);   // stats every 5 seconds
+setInterval(fetchResults, 10000); // results every 10 seconds
+ 
+// Live clock
+setInterval(() => {
+  const now = new Date();
+  const t = now.toTimeString().slice(0,8);
+  document.getElementById('s-time').textContent = t;
+}, 1000);
 window.addEventListener('resize', () => { resize(); initRobots(); });
 </script>
 </body>
