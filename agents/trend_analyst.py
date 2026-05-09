@@ -1,8 +1,9 @@
 """
 AGENT 2: TREND ANALYST
-Primary: Groq (Llama 3.3 70B)
-Fallback: Gemini Flash
-Auto-switches when rate limited!
+Primary:   Groq (Llama 3.3 70B)
+Fallback1: Cerebras (Llama 3.3 70B — same model, different quota)
+Fallback2: Gemini Flash
+Order: Groq → Cerebras → Gemini
 """
 
 import os
@@ -15,14 +16,20 @@ from utils.web_search import search_web, format_search_results
 
 class TrendAnalyst(BaseAgent):
     NAME = "trend_analyst"
-    PROVIDER = "Groq + Gemini Fallback"
+    PROVIDER = "Groq + Cerebras + Gemini Fallback"
 
     def __init__(self):
         super().__init__()
         self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
+
         self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
         self.groq_model = "llama-3.3-70b-versatile"
+
+        self.cerebras_endpoint = "https://api.cerebras.ai/v1/chat/completions"
+        self.cerebras_model = "llama-3.3-70b"
+
         self.gemini_model = "gemini-2.0-flash"
         self.gemini_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent"
 
@@ -58,15 +65,16 @@ ANALYZE TRENDS FOR: {topic}
 ## Build Timing Verdict
 [Too early / perfect / too late? Why?]"""
 
-    def _call_groq(self, prompt: str) -> dict:
-        if not self.groq_key:
-            return {"success": False, "error": "No Groq key"}
+    def _call_openai_compat(self, prompt: str, endpoint: str, api_key: str, model: str, provider_name: str) -> dict:
+        """Generic caller for any OpenAI-compatible endpoint (Groq, Cerebras, Together, etc.)"""
+        if not api_key:
+            return {"success": False, "error": f"No {provider_name} key"}
         headers = {
-            "Authorization": f"Bearer {self.groq_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": self.groq_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": "Sharp trend analyst. Be specific, use web data provided."},
                 {"role": "user", "content": prompt}
@@ -75,13 +83,13 @@ ANALYZE TRENDS FOR: {topic}
             "temperature": 0.6
         }
         try:
-            resp = requests.post(self.groq_endpoint, headers=headers, json=payload, timeout=30)
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
             if resp.status_code == 429:
                 return {"success": False, "rate_limited": True}
             if resp.status_code != 200:
                 return {"success": False, "error": f"HTTP {resp.status_code}"}
             text = resp.json()["choices"][0]["message"]["content"]
-            return {"success": True, "text": text, "provider": "groq"}
+            return {"success": True, "text": text, "provider": provider_name}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -108,26 +116,33 @@ ANALYZE TRENDS FOR: {topic}
             return {"success": False, "error": str(e)}
 
     def call_api(self, prompt: str) -> dict:
-        # Try Groq first
+        # 1. Try Groq
         log(self.NAME, "Trying Groq...")
-        result = self._call_groq(prompt)
+        result = self._call_openai_compat(
+            prompt, self.groq_endpoint, self.groq_key, self.groq_model, "groq"
+        )
         if result["success"]:
             log(self.NAME, "✓ Groq responded")
             return result
 
-        # Groq failed — try Gemini fallback
-        if result.get("rate_limited"):
-            log(self.NAME, "Groq rate limited → switching to Gemini fallback")
-        else:
-            log(self.NAME, f"Groq failed → switching to Gemini fallback")
+        # 2. Groq failed — try Cerebras (same Llama model, separate quota)
+        reason = "rate limited" if result.get("rate_limited") else "failed"
+        log(self.NAME, f"Groq {reason} → trying Cerebras fallback...")
+        result = self._call_openai_compat(
+            prompt, self.cerebras_endpoint, self.cerebras_key, self.cerebras_model, "cerebras"
+        )
+        if result["success"]:
+            log(self.NAME, "✓ Cerebras fallback responded")
+            return result
 
+        # 3. Cerebras failed — try Gemini
+        reason = "rate limited" if result.get("rate_limited") else "failed"
+        log(self.NAME, f"Cerebras {reason} → trying Gemini fallback...")
         result = self._call_gemini(prompt)
         if result["success"]:
             log(self.NAME, "✓ Gemini fallback responded")
             return result
 
-        if result.get("rate_limited"):
-            log(self.NAME, "Both Groq and Gemini rate limited")
-            return {"success": False, "rate_limited": True}
-
-        return {"success": False, "error": "Both providers failed"}
+        # All 3 exhausted
+        log(self.NAME, "⚠️ All providers (Groq, Cerebras, Gemini) rate limited or failed")
+        return {"success": False, "rate_limited": True}
