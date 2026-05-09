@@ -5,350 +5,382 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Agent Research Hub</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #07070f; color: #e0e0e0; font-family: 'Courier New', monospace; height: 100vh; overflow: hidden; }
-.header { position: fixed; top: 0; left: 0; right: 0; z-index: 50; display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: #07070fcc; backdrop-filter: blur(8px); border-bottom: 1px solid #14142a; }
-.logo { font-size: 13px; letter-spacing: 0.12em; color: #555; }
-.logo span { color: #7f77dd; }
-.live-badge { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #1d9e75; }
-.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #1d9e75; animation: blink 2s infinite; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-.stats-bar { position: fixed; top: 40px; left: 0; right: 0; z-index: 49; display: grid; grid-template-columns: repeat(4, 1fr); background: #07070fdd; backdrop-filter: blur(8px); border-bottom: 1px solid #14142a; }
-.stat-item { padding: 8px 16px; text-align: center; }
-.stat-num { font-size: 20px; font-weight: bold; }
-.stat-num.purple { color: #7f77dd; }
-.stat-num.teal { color: #1d9e75; }
-.stat-num.amber { color: #ba7517; }
-.stat-num.blue { color: #378add; }
-.stat-lbl { font-size: 9px; color: #444; letter-spacing: 0.08em; }
-canvas { display: block; width: 100vw; height: 100vh; cursor: default; }
-.sidebar { position: fixed; right: 0; top: 90px; bottom: 0; width: 260px; z-index: 48; background: #0a0a14dd; backdrop-filter: blur(8px); border-left: 1px solid #14142a; display: flex; flex-direction: column; overflow: hidden; }
-.sb-section { padding: 10px 14px; border-bottom: 1px solid #14142a; }
-.sb-title { font-size: 9px; color: #333; letter-spacing: 0.12em; margin-bottom: 8px; }
-.agent-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; border: 1px solid #14142a; background: #0a0a14; margin-bottom: 4px; cursor: pointer; transition: border-color 0.2s; }
-.agent-row:hover { border-color: #2a2a4e; }
-.agent-row.rate_limited { border-color: #3d2a0f50; }
-.agent-row.active { border-color: #0f3d2a50; }
-.a-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.a-dot.active { background: #1d9e75; animation: blink 1.5s infinite; }
-.a-dot.rate_limited { background: #ba7517; }
-.a-dot.unknown { background: #2a2a3e; }
-.a-name { font-size: 11px; color: #bbb; flex: 1; }
-.a-badge { font-size: 9px; padding: 1px 5px; border-radius: 3px; }
-.a-badge.active { background: #0f3d2a; color: #1d9e75; }
-.a-badge.rate_limited { background: #3d2a0f; color: #ba7517; }
-.a-badge.unknown { background: #14142a; color: #444; }
-.fallback { font-size: 9px; color: #333; padding: 0 8px 6px; display: none; line-height: 1.8; }
-.fallback.show { display: block; }
-.fallback span { color: #7f77dd; }
-.feed { flex: 1; overflow-y: auto; padding: 8px; }
-.feed::-webkit-scrollbar { width: 2px; }
-.feed::-webkit-scrollbar-thumb { background: #1a1a2e; }
-.feed-item { display: flex; gap: 7px; padding: 6px 8px; margin-bottom: 3px; border-radius: 4px; background: #0a0a14; border: 1px solid #10101e; }
-.fd { width: 5px; height: 5px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
-.ft { font-size: 10px; color: #666; line-height: 1.5; }
-.ft strong { color: #aaa; font-weight: normal; }
-.ftime { font-size: 9px; color: #2a2a3e; }
-.popup { position: fixed; z-index: 200; background: #0d0d1e; border: 1px solid #2a2a5e; border-radius: 10px; padding: 0; width: 460px; box-shadow: 0 0 40px #7f77dd20; display: none; overflow: hidden; }
-.popup.show { display: block; }
-.popup-header { padding: 14px 16px 10px; border-bottom: 1px solid #14142a; display: flex; justify-content: space-between; align-items: flex-start; }
-.popup-topic { font-size: 13px; color: #ddd; line-height: 1.4; }
-.popup-meta { font-size: 10px; color: #333; margin-top: 4px; }
-.popup-close { background: none; border: 1px solid #1a1a2e; color: #444; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px; flex-shrink: 0; margin-left: 10px; }
-.popup-close:hover { color: #aaa; border-color: #2a2a4e; }
-.popup-score { font-size: 11px; padding: 2px 8px; border-radius: 3px; margin-top: 6px; display: inline-block; }
-.popup-score.high { background: #0f3d2a; color: #1d9e75; }
-.popup-score.mid { background: #3d2a0f; color: #ba7517; }
-.popup-score.low { background: #1a1a2e; color: #444; }
-.popup-body { padding: 12px 16px; max-height: 320px; overflow-y: auto; }
-.popup-body::-webkit-scrollbar { width: 3px; }
-.popup-body::-webkit-scrollbar-thumb { background: #1a1a2e; }
-.popup-content { font-size: 11px; color: #777; line-height: 1.9; white-space: pre-wrap; }
-.filter-bar { position: fixed; bottom: 0; left: 0; right: 260px; z-index: 48; padding: 8px 14px; background: #07070fdd; backdrop-filter: blur(8px); border-top: 1px solid #14142a; display: flex; align-items: center; gap: 8px; }
-.filter-label { font-size: 9px; color: #333; letter-spacing: 0.1em; }
-.fbtn { font-size: 9px; padding: 3px 10px; border-radius: 3px; border: 1px solid #14142a; background: transparent; color: #444; cursor: pointer; font-family: inherit; transition: all 0.15s; }
-.fbtn.on { background: #14142a; color: #ccc; border-color: #2a2a4e; }
-.bubble-count { margin-left: auto; font-size: 10px; color: #2a2a3e; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#07070f;color:#e0e0e0;font-family:'Courier New',monospace;height:100vh;overflow:hidden}
+.header{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;justify-content:space-between;align-items:center;padding:10px 20px;background:#07070fcc;backdrop-filter:blur(8px);border-bottom:1px solid #14142a}
+.logo{font-size:13px;letter-spacing:.12em;color:#555}
+.logo b{color:#7f77dd;font-weight:normal}
+.live{display:flex;align-items:center;gap:6px;font-size:11px;color:#1d9e75}
+.dot{width:7px;height:7px;border-radius:50%;background:#1d9e75;animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.stats{position:fixed;top:40px;left:0;right:0;z-index:49;display:grid;grid-template-columns:repeat(4,1fr);background:#07070fdd;backdrop-filter:blur(8px);border-bottom:1px solid #14142a}
+.si{padding:8px 16px;text-align:center}
+.sn{font-size:20px;font-weight:bold}
+.sn.pu{color:#7f77dd}.sn.te{color:#1d9e75}.sn.am{color:#ba7517}.sn.bl{color:#378add}
+.sl{font-size:9px;color:#444;letter-spacing:.08em}
+canvas{display:block;width:100vw;height:100vh;cursor:default}
+.sb{position:fixed;right:0;top:90px;bottom:0;width:255px;z-index:48;background:#0a0a14dd;backdrop-filter:blur(8px);border-left:1px solid #14142a;display:flex;flex-direction:column;overflow:hidden}
+.sbs{padding:10px 14px;border-bottom:1px solid #14142a}
+.sbt{font-size:9px;color:#333;letter-spacing:.12em;margin-bottom:8px}
+.ar{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;border:1px solid #14142a;background:#0a0a14;margin-bottom:4px;cursor:pointer;transition:border-color .2s}
+.ar:hover{border-color:#2a2a4e}
+.ar.active{border-color:#0f3d2a50}.ar.rate_limited{border-color:#3d2a0f50}
+.ad{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ad.active{background:#1d9e75;animation:blink 1.5s infinite}
+.ad.rate_limited{background:#ba7517}.ad.unknown{background:#2a2a3e}
+.an{font-size:11px;color:#bbb;flex:1}
+.ab{font-size:9px;padding:1px 5px;border-radius:3px}
+.ab.active{background:#0f3d2a;color:#1d9e75}.ab.rate_limited{background:#3d2a0f;color:#ba7517}.ab.unknown{background:#14142a;color:#444}
+.fb{font-size:9px;color:#333;padding:0 8px 6px;display:none;line-height:1.8}
+.fb.show{display:block}.fb span{color:#7f77dd}
+.feed{flex:1;overflow-y:auto;padding:8px}
+.feed::-webkit-scrollbar{width:2px}
+.feed::-webkit-scrollbar-thumb{background:#1a1a2e}
+.fi{display:flex;gap:7px;padding:6px 8px;margin-bottom:3px;border-radius:4px;background:#0a0a14;border:1px solid #10101e}
+.fd2{width:5px;height:5px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.ft{font-size:10px;color:#666;line-height:1.5}.ft strong{color:#aaa;font-weight:normal}
+.ftime{font-size:9px;color:#2a2a3e}
+.popup{position:fixed;z-index:200;background:#0d0d1e;border:1px solid #2a2a5e;border-radius:10px;width:480px;box-shadow:0 20px 60px #00000080;display:none;overflow:hidden;max-height:85vh;flex-direction:column}
+.popup.show{display:flex}
+.ph{padding:14px 16px 12px;border-bottom:1px solid #14142a;flex-shrink:0}
+.ph-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ptopic{font-size:14px;color:#ddd;line-height:1.4;margin:6px 0 4px}
+.pmeta{font-size:10px;color:#333}
+.pclose{background:none;border:1px solid #1a1a2e;color:#444;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;flex-shrink:0}
+.pclose:hover{color:#aaa;border-color:#2a2a4e}
+.pscore{font-size:11px;padding:2px 8px;border-radius:3px;margin-top:6px;display:inline-block}
+.pscore.hi{background:#0f3d2a;color:#1d9e75}.pscore.mi{background:#3d2a0f;color:#ba7517}.pscore.lo{background:#1a1a2e;color:#444}
+.pb{padding:14px 16px;overflow-y:auto;flex:1}
+.pb::-webkit-scrollbar{width:3px}
+.pb::-webkit-scrollbar-thumb{background:#1a1a2e}
+.pc{font-size:11px;color:#777;line-height:1.9;white-space:pre-wrap}
+.fbar{position:fixed;bottom:0;left:0;right:255px;z-index:48;padding:7px 14px;background:#07070fdd;backdrop-filter:blur(8px);border-top:1px solid #14142a;display:flex;align-items:center;gap:6px}
+.fl{font-size:9px;color:#333;letter-spacing:.1em}
+.fbtn{font-size:9px;padding:3px 10px;border-radius:3px;border:1px solid #14142a;background:transparent;color:#444;cursor:pointer;font-family:inherit;transition:all .15s}
+.fbtn.on{background:#14142a;color:#ccc;border-color:#2a2a4e}
+.bc{margin-left:auto;font-size:10px;color:#2a2a3e}
+.hint{position:fixed;bottom:35px;left:50%;transform:translateX(-50%);font-size:10px;color:#2a2a3e;pointer-events:none;transition:opacity 1s;letter-spacing:.08em}
 </style>
 </head>
 <body>
+<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden">Agent Research Hub — live Obsidian-style graph showing 6 AI research agents and their findings as clickable bubbles</h2>
 <div class="header">
-  <div class="logo">// <span>AGENT</span> RESEARCH HUB <span style="font-size:10px;color:#222;margin-left:8px;">v6 · obsidian graph · click bubbles</span></div>
-  <div class="live-badge"><div class="live-dot"></div>LIVE <span id="tick" style="font-size:9px;color:#0f3d2a;margin-left:3px;"></span></div>
+  <div class="logo">// <b>AGENT</b> RESEARCH HUB <span style="font-size:10px;color:#222;margin-left:8px">v6 · obsidian graph · click any bubble</span></div>
+  <div class="live"><div class="dot"></div>LIVE <span id="tick" style="font-size:9px;color:#0f3d2a;margin-left:3px"></span></div>
 </div>
-<div class="stats-bar">
-  <div class="stat-item"><div class="stat-num purple" id="s-total">—</div><div class="stat-lbl">RESULTS</div></div>
-  <div class="stat-item"><div class="stat-num teal" id="s-active">—</div><div class="stat-lbl">ACTIVE</div></div>
-  <div class="stat-item"><div class="stat-num amber" id="s-topics">—</div><div class="stat-lbl">TOPICS</div></div>
-  <div class="stat-item"><div class="stat-num blue" id="s-time">—</div><div class="stat-lbl">CLOCK</div></div>
+<div class="stats">
+  <div class="si"><div class="sn pu" id="s-total">—</div><div class="sl">RESULTS</div></div>
+  <div class="si"><div class="sn te" id="s-active">—</div><div class="sl">ACTIVE</div></div>
+  <div class="si"><div class="sn am" id="s-topics">—</div><div class="sl">TOPICS</div></div>
+  <div class="si"><div class="sn bl" id="s-time">—</div><div class="sl">CLOCK</div></div>
 </div>
 <canvas id="c"></canvas>
-<div class="sidebar">
-  <div class="sb-section"><div class="sb-title">AGENTS — click to expand</div><div id="agent-list"></div></div>
-  <div class="sb-title" style="padding:10px 14px 4px;font-size:9px;color:#333;letter-spacing:0.12em;">LIVE ACTIVITY</div>
+<div class="sb">
+  <div class="sbs"><div class="sbt">AGENTS — click to expand</div><div id="alist"></div></div>
+  <div class="sbt" style="padding:10px 14px 4px;font-size:9px;color:#333;letter-spacing:.12em">LIVE ACTIVITY</div>
   <div class="feed" id="feed"></div>
 </div>
-<div class="filter-bar">
-  <span class="filter-label">FILTER BUBBLES</span>
-  <button class="fbtn on" onclick="setFilter('all',this)">All</button>
-  <button class="fbtn" onclick="setFilter('market_scout',this)">Scout</button>
-  <button class="fbtn" onclick="setFilter('trend_analyst',this)">Analyst</button>
-  <button class="fbtn" onclick="setFilter('deep_diver',this)">Diver</button>
-  <button class="fbtn" onclick="setFilter('critic',this)">Critic</button>
-  <button class="fbtn" onclick="setFilter('memory',this)">Memory</button>
-  <span class="bubble-count" id="bubble-count"></span>
+<div class="fbar">
+  <span class="fl">FILTER BUBBLES</span>
+  <button class="fbtn on" onclick="setF('all',this)">All</button>
+  <button class="fbtn" onclick="setF('market_scout',this)">Scout</button>
+  <button class="fbtn" onclick="setF('trend_analyst',this)">Analyst</button>
+  <button class="fbtn" onclick="setF('deep_diver',this)">Diver</button>
+  <button class="fbtn" onclick="setF('critic',this)">Critic</button>
+  <button class="fbtn" onclick="setF('memory',this)">Memory</button>
+  <span class="bc" id="bc"></span>
 </div>
 <div class="popup" id="popup">
-  <div class="popup-header">
-    <div>
-      <div id="p-agent" style="margin-bottom:6px;"></div>
-      <div class="popup-topic" id="p-topic"></div>
-      <div class="popup-meta" id="p-meta"></div>
-      <div id="p-score"></div>
+  <div class="ph">
+    <div class="ph-top">
+      <div style="flex:1;min-width:0">
+        <div id="p-agent"></div>
+        <div class="ptopic" id="p-topic"></div>
+        <div class="pmeta" id="p-meta"></div>
+        <div id="p-score"></div>
+      </div>
+      <button class="pclose" onclick="closeP()">✕ close</button>
     </div>
-    <button class="popup-close" onclick="closePopup()">✕ close</button>
   </div>
-  <div class="popup-body"><div class="popup-content" id="p-content"></div></div>
+  <div class="pb"><div class="pc" id="p-content"></div></div>
 </div>
+<div class="hint" id="hint">click any glowing bubble to read the research</div>
 <script>
-const AGENT_DEFS=[
-  {key:'market_scout',name:'Scout',color:'#378add',fallbacks:['Primary: Gemini','→ Fallback: Groq']},
-  {key:'trend_analyst',name:'Analyst',color:'#1d9e75',fallbacks:['Primary: Groq','→ Fallback: Gemini']},
-  {key:'deep_diver',name:'Diver',color:'#7f77dd',fallbacks:['Primary: Nemotron','→ Fallback 1: QwQ-32B','→ Fallback 2: Gemini']},
-  {key:'critic',name:'Critic',color:'#d85a30',fallbacks:['Primary: Groq']},
-  {key:'memory',name:'Memory',color:'#ba7517',fallbacks:['Primary: Gemini']},
-  {key:'synthesis',name:'Synth',color:'#d4537e',fallbacks:['Every Sunday 09:00']},
+const ADEFS=[
+  {key:'market_scout',name:'Scout',color:'#378add',fb:['Primary: Gemini','→ Fallback: Groq']},
+  {key:'trend_analyst',name:'Analyst',color:'#1d9e75',fb:['Primary: Groq','→ Fallback: Gemini']},
+  {key:'deep_diver',name:'Diver',color:'#7f77dd',fb:['Primary: Nemotron','→ Fallback 1: QwQ-32B','→ Fallback 2: Gemini']},
+  {key:'critic',name:'Critic',color:'#d85a30',fb:['Primary: Groq']},
+  {key:'memory',name:'Memory',color:'#ba7517',fb:['Primary: Gemini']},
+  {key:'synthesis',name:'Synth',color:'#d4537e',fb:['Every Sunday 09:00']},
 ];
-const COLORS={};
-AGENT_DEFS.forEach(a=>COLORS[a.key]=a.color);
-let agentStatuses={},allResults=[],activeFilter='all',feedItems=[],bubbles=[],robots=[],particles=[],frame=0;
-const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
-function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;placeRobots();}
+const C={};ADEFS.forEach(a=>C[a.key]=a.color);
+let statuses={},results=[],filter='all',feedLog=[],bubbles=[],robots=[],parts=[],fr=0,hovered=null;
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+
+function resize(){cv.width=window.innerWidth;cv.height=window.innerHeight;if(robots.length)reposition();}
 resize();window.addEventListener('resize',resize);
 
 class Robot{
-  constructor(def,x,y){this.key=def.key;this.name=def.name;this.color=def.color;this.x=x;this.y=y;this.tx=x;this.ty=y;this.status='unknown';this.pulse=Math.random()*Math.PI*2;this.wobble=Math.random()*Math.PI*2;}
-  update(){this.pulse+=0.035;this.wobble+=0.02;const dx=this.tx-this.x,dy=this.ty-this.y;if(Math.abs(dx)>0.5||Math.abs(dy)>0.5){this.x+=dx*0.04;this.y+=dy*0.04;}}
-  draw(ctx){
-    const{x,y,color,status,pulse,wobble}=this;
-    const active=status==='active',limited=status==='rate_limited';
-    const alpha=limited?0.4:1,glow=active?0.6+0.3*Math.sin(pulse):0.2;
-    const bob=active?Math.sin(wobble)*2:0,wy=y+bob;
+  constructor(d,x,y){Object.assign(this,{key:d.key,name:d.name,color:d.color,x,y,tx:x,ty:y,status:'unknown',p:Math.random()*Math.PI*2,w:Math.random()*Math.PI*2});}
+  tick(){this.p+=.032;this.w+=.018;const dx=this.tx-this.x,dy=this.ty-this.y;if(Math.abs(dx)>.4||Math.abs(dy)>.4){this.x+=dx*.05;this.y+=dy*.05;}}
+  draw(){
+    const{x,y,color:c,status:s,p,w}=this;
+    const active=s==='active',lim=s==='rate_limited';
+    const alpha=lim?.38:1,glow=active?.65+.28*Math.sin(p):.18,bob=active?Math.sin(w)*2.5:0,wy=y+bob;
     ctx.save();ctx.globalAlpha=alpha;
-    if(active){ctx.globalAlpha=0.08+0.05*Math.sin(pulse);ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,wy,38,0,Math.PI*2);ctx.fill();ctx.globalAlpha=alpha;}
-    ctx.fillStyle='#10101e';ctx.strokeStyle=color+'30';ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(x-36,wy+22,72,9,3);ctx.fill();ctx.stroke();
-    ctx.fillStyle='#0d0d1e';ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(x-13,wy-11,26,22,5);ctx.fill();ctx.stroke();
-    ctx.beginPath();ctx.roundRect(x-10,wy-23,20,14,4);ctx.fill();ctx.stroke();
-    ctx.globalAlpha=glow;ctx.fillStyle=color;
-    ctx.beginPath();ctx.arc(x-4,wy-17,2,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(x+4,wy-17,2,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=active?0.8:0.3;ctx.strokeStyle=color;ctx.lineWidth=2;
-    const sw=active?Math.sin(pulse*2)*5:0;
-    ctx.beginPath();ctx.moveTo(x-5,wy+11);ctx.lineTo(x-5-sw,wy+22);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(x+5,wy+11);ctx.lineTo(x+5+sw,wy+22);ctx.stroke();
-    const aw=active?Math.sin(pulse*2+1)*7:0;
-    ctx.beginPath();ctx.moveTo(x-13,wy-2);ctx.lineTo(x-20-aw,wy+5);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(x+13,wy-2);ctx.lineTo(x+20+aw,wy+5);ctx.stroke();
-    ctx.globalAlpha=1;ctx.fillStyle=active?'#1d9e75':limited?'#ba7517':'#1a1a2e';
-    ctx.beginPath();ctx.arc(x+8,wy-5,2.5,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=0.6;ctx.fillStyle='#777';ctx.font='9px Courier New';ctx.textAlign='center';
-    ctx.fillText(this.name,x,wy+38);ctx.restore();
+    if(active){ctx.globalAlpha=.07+.04*Math.sin(p);ctx.fillStyle=c;ctx.beginPath();ctx.arc(x,wy,44,0,Math.PI*2);ctx.fill();ctx.globalAlpha=alpha;}
+    // platform
+    ctx.fillStyle='#0e0e1e';ctx.strokeStyle=c+'28';ctx.lineWidth=1;
+    ctx.beginPath();ctx.roundRect(x-38,wy+24,76,10,3);ctx.fill();ctx.stroke();
+    // body
+    ctx.fillStyle='#0c0c1c';ctx.strokeStyle=c;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.roundRect(x-14,wy-12,28,24,5);ctx.fill();ctx.stroke();
+    // head
+    ctx.beginPath();ctx.roundRect(x-11,wy-25,22,15,4);ctx.fill();ctx.stroke();
+    // eyes
+    ctx.globalAlpha=glow;ctx.fillStyle=c;
+    ctx.beginPath();ctx.arc(x-4,wy-18,2.2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(x+4,wy-18,2.2,0,Math.PI*2);ctx.fill();
+    // antennae (active only)
+    if(active){ctx.globalAlpha=.5+.3*Math.sin(p*1.5);ctx.strokeStyle=c;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,wy-25);ctx.lineTo(x,wy-33);ctx.stroke();ctx.beginPath();ctx.arc(x,wy-35,2.5,0,Math.PI*2);ctx.fill();}
+    // legs
+    ctx.globalAlpha=active?.75:.25;ctx.strokeStyle=c;ctx.lineWidth=2;
+    const sw=active?Math.sin(p*2)*5:0;
+    ctx.beginPath();ctx.moveTo(x-5,wy+12);ctx.lineTo(x-5-sw,wy+24);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+5,wy+12);ctx.lineTo(x+5+sw,wy+24);ctx.stroke();
+    // arms
+    const aw=active?Math.sin(p*2+1)*7:0;
+    ctx.beginPath();ctx.moveTo(x-14,wy-2);ctx.lineTo(x-21-aw,wy+5);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+14,wy-2);ctx.lineTo(x+21+aw,wy+5);ctx.stroke();
+    // status light
+    ctx.globalAlpha=1;ctx.fillStyle=active?'#1d9e75':lim?'#ba7517':'#1a1a2e';
+    ctx.beginPath();ctx.arc(x+9,wy-4,2.5,0,Math.PI*2);ctx.fill();
+    // label
+    ctx.globalAlpha=.55;ctx.fillStyle='#666';ctx.font='9px Courier New';ctx.textAlign='center';
+    ctx.fillText(this.name,x,wy+41);
+    ctx.restore();
   }
 }
 
-function placeRobots(){
-  const W=canvas.width-280,H=canvas.height;
-  const pos=[{key:'market_scout',x:W*0.14,y:H*0.28},{key:'trend_analyst',x:W*0.37,y:H*0.58},{key:'deep_diver',x:W*0.61,y:H*0.28},{key:'critic',x:W*0.78,y:H*0.55},{key:'memory',x:W*0.88,y:H*0.22},{key:'synthesis',x:W*0.50,y:H*0.78}];
-  if(robots.length===0){robots=pos.map(p=>{const def=AGENT_DEFS.find(a=>a.key===p.key);return new Robot(def,p.x,p.y);});}
-  else{pos.forEach((p,i)=>{if(robots[i]){robots[i].tx=p.x;robots[i].ty=p.y;}});}
+function reposition(){
+  const W=cv.width-270,H=cv.height;
+  const pos=[
+    {key:'market_scout',x:W*.13,y:H*.27},
+    {key:'trend_analyst',x:W*.36,y:H*.57},
+    {key:'deep_diver',x:W*.60,y:H*.27},
+    {key:'critic',x:W*.78,y:H*.53},
+    {key:'memory',x:W*.88,y:H*.22},
+    {key:'synthesis',x:W*.50,y:H*.77},
+  ];
+  if(!robots.length){robots=ADEFS.map(d=>{const p=pos.find(p=>p.key===d.key);return new Robot(d,p.x,p.y);});}
+  else pos.forEach((p,i)=>{if(robots[i]){robots[i].tx=p.x;robots[i].ty=p.y;}});
 }
 
 class Bubble{
-  constructor(result,x,y){
-    this.result=result;this.x=x;this.y=y;this.vx=(Math.random()-0.5)*0.25;this.vy=(Math.random()-0.5)*0.25;
-    this.color=COLORS[result.agent]||'#2a2a5e';this.pulse=Math.random()*Math.PI*2;this.age=0;
-    this.r=6+Math.min(12,(result.score||0)*1.3);this.connections=[];
-    this.label=(result.topic||'').replace(/20\d\d[-\u20130-9]*/g,'').replace(/\b(apps?|tool|platform|market|gaps?)\b/gi,'').replace(/\s+/g,' ').trim().slice(0,18);
+  constructor(r,x,y){
+    this.r=r;this.x=x;this.y=y;
+    this.vx=(Math.random()-.5)*.22;this.vy=(Math.random()-.5)*.22;
+    this.color=C[r.agent]||'#2a2a5e';
+    this.p=Math.random()*Math.PI*2;this.age=0;
+    this.rad=6+Math.min(13,(r.score||0)*1.4);
+    this.conn=[];
+    this.label=(r.topic||'')
+      .replace(/20\d\d[-–]?\d{0,4}/g,'')
+      .replace(/\b(apps?|tool|platform|gaps?|market)\b/gi,'')
+      .replace(/\s+/g,' ').trim().slice(0,18);
   }
-  update(W,H){
-    this.pulse+=0.02;this.age++;this.x+=this.vx;this.y+=this.vy;
-    if(this.x<30)this.vx+=0.04;if(this.x>W-30)this.vx-=0.04;
-    if(this.y<98)this.vy+=0.04;if(this.y>H-35)this.vy-=0.04;
-    this.vx*=0.996;this.vy*=0.996;
+  tick(W,H){
+    this.p+=.022;this.age++;
+    this.x+=this.vx;this.y+=this.vy;
+    if(this.x<28)this.vx+=.04;if(this.x>W-28)this.vx-=.04;
+    if(this.y<100)this.vy+=.04;if(this.y>H-32)this.vy-=.04;
+    this.vx*=.997;this.vy*=.997;
   }
-  draw(ctx,hovered){
-    const{x,y,r,color,pulse,age}=this;
-    const fi=Math.min(1,age/40),g=hovered?1:0.35+0.15*Math.sin(pulse);
+  draw(hov){
+    const{x,y,rad:r,color:c,p,age,label}=this;
+    const fi=Math.min(1,age/45),g=hov?1:.38+.14*Math.sin(p);
     ctx.save();
-    ctx.globalAlpha=fi*g*0.12;ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r+7,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=fi*(hovered?0.9:0.5);ctx.fillStyle=color+'18';ctx.strokeStyle=color+(hovered?'ff':'70');ctx.lineWidth=hovered?1.5:0.8;
+    // outer glow
+    ctx.globalAlpha=fi*g*.13;ctx.fillStyle=c;
+    ctx.beginPath();ctx.arc(x,y,r+9,0,Math.PI*2);ctx.fill();
+    // mid ring
+    ctx.globalAlpha=fi*g*.08;
+    ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.fill();
+    // bubble
+    ctx.globalAlpha=fi*(hov?.85:.48);
+    ctx.fillStyle=c+'18';ctx.strokeStyle=c+(hov?'ff':'65');ctx.lineWidth=hov?1.8:.8;
     ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.stroke();
-    ctx.globalAlpha=fi*(hovered?1:g);ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r*0.28,0,Math.PI*2);ctx.fill();
-    if(hovered||r>10){
-      const lw=this.label.length*5+10;
-      ctx.globalAlpha=fi*(hovered?1:0.75);
-      ctx.fillStyle='#08080f';ctx.strokeStyle=color+'50';ctx.lineWidth=0.5;
-      ctx.beginPath();ctx.roundRect(x-lw/2,y+r+3,lw,13,3);ctx.fill();ctx.stroke();
-      ctx.fillStyle=hovered?color:color+'bb';ctx.font=(hovered?9:8)+'px Courier New';ctx.textAlign='center';
-      ctx.fillText(this.label,x,y+r+12);
+    // inner core
+    ctx.globalAlpha=fi*(hov?1:g*.8);ctx.fillStyle=c;
+    ctx.beginPath();ctx.arc(x,y,r*.26,0,Math.PI*2);ctx.fill();
+    // label pill
+    if(hov||r>10){
+      const lw=label.length*5.2+12;
+      ctx.globalAlpha=fi*(hov?1:.75);
+      ctx.fillStyle='#07070f';ctx.strokeStyle=c+(hov?'80':'40');ctx.lineWidth=.5;
+      ctx.beginPath();ctx.roundRect(x-lw/2,y+r+4,lw,13,3);ctx.fill();ctx.stroke();
+      ctx.fillStyle=hov?c:c+'cc';ctx.font=(hov?9:8)+'px Courier New';ctx.textAlign='center';
+      ctx.fillText(label,x,y+r+13);
+    }
+    // hover ring pulse
+    if(hov){
+      ctx.globalAlpha=.25+.2*Math.sin(p*3);ctx.strokeStyle=c;ctx.lineWidth=1;
+      ctx.beginPath();ctx.arc(x,y,r+14,0,Math.PI*2);ctx.stroke();
     }
     ctx.restore();
   }
-  hitTest(mx,my){const dx=mx-this.x,dy=my-this.y;return Math.sqrt(dx*dx+dy*dy)<=this.r+8;}
+  hit(mx,my){const dx=mx-this.x,dy=my-this.y;return Math.sqrt(dx*dx+dy*dy)<=this.rad+10;}
 }
 
-function addBubble(result){
-  const W=canvas.width-280,H=canvas.height;
-  const robot=robots.find(r=>r.key===result.agent);
+function addBubble(res){
+  const W=cv.width-270,H=cv.height;
+  const rb=robots.find(r=>r.key===res.agent);
   let x,y;
-  if(robot){x=robot.x+(Math.random()-0.5)*130;y=robot.y+(Math.random()-0.5)*110;}
-  else{x=60+Math.random()*(W-120);y=100+Math.random()*(H-150);}
-  x=Math.max(30,Math.min(W-30,x));y=Math.max(98,Math.min(H-35,y));
-  const b=new Bubble(result,x,y);
-  bubbles.filter(e=>e.result.agent===result.agent).slice(-6).forEach(e=>{
+  if(rb){x=rb.x+(Math.random()-.5)*140;y=rb.y+(Math.random()-.5)*120;}
+  else{x=60+Math.random()*(W-120);y=100+Math.random()*(H-140);}
+  x=Math.max(28,Math.min(W-28,x));y=Math.max(98,Math.min(H-32,y));
+  const b=new Bubble(res,x,y);
+  bubbles.filter(e=>e.r.agent===res.agent).slice(-6).forEach(e=>{
     const dx=e.x-x,dy=e.y-y;
-    if(Math.sqrt(dx*dx+dy*dy)<160&&b.connections.length<3)b.connections.push(e);
+    if(Math.sqrt(dx*dx+dy*dy)<165&&b.conn.length<3)b.conn.push(e);
   });
   bubbles.push(b);
-  if(bubbles.length>120)bubbles.shift();
+  if(bubbles.length>130)bubbles.shift();
 }
 
 class Particle{
-  constructor(x,y,tx,ty,color){this.x=x;this.y=y;this.sx=x;this.sy=y;this.tx=tx;this.ty=ty;this.color=color;this.p=0;this.speed=0.007+Math.random()*0.006;this.done=false;this.size=2+Math.random()*1.5;}
-  update(){this.p+=this.speed;if(this.p>=1){this.done=true;return;}const t=this.p;this.x=this.sx+(this.tx-this.sx)*t;this.y=this.sy+(this.ty-this.sy)*t-Math.sin(t*Math.PI)*45;}
-  draw(ctx){ctx.save();ctx.globalAlpha=(1-this.p)*0.85;ctx.fillStyle=this.color;ctx.shadowColor=this.color;ctx.shadowBlur=5;ctx.beginPath();ctx.arc(this.x,this.y,this.size,0,Math.PI*2);ctx.fill();ctx.restore();}
+  constructor(x,y,tx,ty,c){Object.assign(this,{x,y,sx:x,sy:y,tx,ty,c,p:0,spd:.007+Math.random()*.006,done:false,sz:2+Math.random()*1.5});}
+  tick(){this.p+=this.spd;if(this.p>=1){this.done=true;return;}const t=this.p;this.x=this.sx+(this.tx-this.sx)*t;this.y=this.sy+(this.ty-this.sy)*t-Math.sin(t*Math.PI)*50;}
+  draw(){ctx.save();ctx.globalAlpha=(1-this.p)*.88;ctx.fillStyle=this.c;ctx.shadowColor=this.c;ctx.shadowBlur=5;ctx.beginPath();ctx.arc(this.x,this.y,this.sz,0,Math.PI*2);ctx.fill();ctx.restore();}
 }
 
-function spawnParticle(fk,tk){
-  const f=robots.find(r=>r.key===fk),t=robots.find(r=>r.key===tk);
-  if(f&&t)particles.push(new Particle(f.x,f.y,t.x,t.y,COLORS[fk]));
-}
+function spark(fk,tk){const f=robots.find(r=>r.key===fk),t=robots.find(r=>r.key===tk);if(f&&t)parts.push(new Particle(f.x,f.y,t.x,t.y,C[fk]));}
 
-const PIPELINE=[['market_scout','trend_analyst'],['trend_analyst','deep_diver'],['deep_diver','critic'],['critic','memory'],['critic','synthesis'],['memory','market_scout']];
+const PIPE=[['market_scout','trend_analyst'],['trend_analyst','deep_diver'],['deep_diver','critic'],['critic','memory'],['critic','synthesis'],['memory','market_scout']];
 
-function drawPipeline(){
-  PIPELINE.forEach(([a,b])=>{
-    const ra=robots.find(r=>r.key===a),rb=robots.find(r=>r.key===b);
-    if(!ra||!rb)return;
-    ctx.save();ctx.strokeStyle='#14142a';ctx.lineWidth=0.8;ctx.setLineDash([3,9]);
+function drawPipe(){
+  PIPE.forEach(([a,b])=>{
+    const ra=robots.find(r=>r.key===a),rb=robots.find(r=>r.key===b);if(!ra||!rb)return;
+    ctx.save();ctx.strokeStyle='#12122a';ctx.lineWidth=.7;ctx.setLineDash([3,10]);
     ctx.beginPath();ctx.moveTo(ra.x,ra.y);ctx.lineTo(rb.x,rb.y);ctx.stroke();ctx.restore();
   });
 }
 
-function drawConnections(){
+function drawConn(){
   bubbles.forEach(b=>{
-    b.connections.forEach(o=>{
+    b.conn.forEach(o=>{
       if(!bubbles.includes(o))return;
-      ctx.save();ctx.strokeStyle=b.color+'12';ctx.lineWidth=0.4;ctx.setLineDash([2,6]);
+      ctx.save();ctx.strokeStyle=b.color+'14';ctx.lineWidth=.4;ctx.setLineDash([2,7]);
       ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(o.x,o.y);ctx.stroke();ctx.restore();
     });
   });
 }
 
-let mx=-999,my=-999,hoveredBubble=null;
-canvas.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;hoveredBubble=[...bubbles].reverse().find(b=>b.hitTest(mx,my))||null;canvas.style.cursor=hoveredBubble?'pointer':'default';});
-canvas.addEventListener('click',e=>{const hit=[...bubbles].reverse().find(b=>b.hitTest(e.clientX,e.clientY));if(hit)openPopup(hit.result,e.clientX,e.clientY);});
+// mouse
+let mx=-999,my=-999;
+cv.addEventListener('mousemove',e=>{
+  mx=e.clientX;my=e.clientY;
+  hovered=[...bubbles].reverse().find(b=>b.hit(mx,my))||null;
+  cv.style.cursor=hovered?'pointer':'default';
+});
+cv.addEventListener('click',e=>{
+  const hit=[...bubbles].reverse().find(b=>b.hit(e.clientX,e.clientY));
+  if(hit){openP(hit.r,e.clientX,e.clientY);document.getElementById('hint').style.opacity='0';}
+});
 
-function openPopup(r,cx,cy){
-  const popup=document.getElementById('popup');
-  const score=r.score||0,sc=score>=7?'high':score>=4?'mid':'low';
-  const ac=COLORS[r.agent]||'#7f77dd';
+function openP(r,cx,cy){
+  const sc=r.score||0,cls=sc>=7?'hi':sc>=4?'mi':'lo',ac=C[r.agent]||'#7f77dd';
   document.getElementById('p-agent').innerHTML=`<span style="font-size:9px;padding:2px 7px;border-radius:3px;background:${ac}20;color:${ac}">${r.agent||''}</span>`;
   document.getElementById('p-topic').textContent=r.topic||'';
   document.getElementById('p-meta').textContent=(r.created_at||'').slice(0,16).replace('T',' ');
-  document.getElementById('p-score').innerHTML=score>0?`<span class="popup-score ${sc}">${score}/10</span>`:'';
+  document.getElementById('p-score').innerHTML=sc>0?`<span class="pscore ${cls}">${sc}/10</span>`:'';
   document.getElementById('p-content').textContent=(r.content||'').replace(/^## (.+)$/gm,'\n── $1 ──\n');
-  popup.style.display='block';
-  const pw=460,ph=popup.offsetHeight||400;
-  let px=cx+15,py=cy-20;
-  if(px+pw>window.innerWidth-270)px=cx-pw-15;
+  const pop=document.getElementById('popup');
+  pop.style.display='flex';
+  const pw=480,ph=Math.min(window.innerHeight*.85,560);
+  let px=cx+18,py=cy-30;
+  if(px+pw>window.innerWidth-265)px=cx-pw-18;
   if(py+ph>window.innerHeight-10)py=window.innerHeight-ph-10;
-  if(py<10)py=10;
-  popup.style.left=px+'px';popup.style.top=py+'px';popup.classList.add('show');
+  if(py<10)py=10;px=Math.max(10,px);
+  pop.style.left=px+'px';pop.style.top=py+'px';pop.classList.add('show');
 }
-function closePopup(){document.getElementById('popup').classList.remove('show');}
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closePopup();});
+function closeP(){document.getElementById('popup').classList.remove('show');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeP();});
 
 function loop(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle='#0e0e1e';
-  for(let x=0;x<canvas.width-260;x+=32)for(let y=90;y<canvas.height-30;y+=32){ctx.beginPath();ctx.arc(x,y,0.4,0,Math.PI*2);ctx.fill();}
-  drawPipeline();drawConnections();
-  const W=canvas.width-280;
-  bubbles.forEach(b=>{b.update(W,canvas.height);b.draw(ctx,b===hoveredBubble);});
-  particles=particles.filter(p=>!p.done);
-  particles.forEach(p=>{p.update();p.draw(ctx);});
-  robots.forEach(r=>{r.update();r.draw(ctx);});
-  frame++;
-  PIPELINE.forEach(([a,b],i)=>{
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // grid
+  ctx.fillStyle='#0d0d1d';
+  for(let x=0;x<cv.width-260;x+=32)for(let y=90;y<cv.height-28;y+=32){ctx.beginPath();ctx.arc(x,y,.4,0,Math.PI*2);ctx.fill();}
+  drawPipe();drawConn();
+  const W=cv.width-270;
+  bubbles.forEach(b=>{b.tick(W,cv.height);b.draw(b===hovered);});
+  parts=parts.filter(p=>!p.done);parts.forEach(p=>{p.tick();p.draw();});
+  robots.forEach(r=>{r.tick();r.draw();});
+  fr++;
+  PIPE.forEach(([a,b],i)=>{
     const ra=robots.find(r=>r.key===a);if(!ra)return;
-    const interval=ra.status==='active'?50:220;
-    if((frame+i*17)%interval===0)spawnParticle(a,b);
+    const iv=ra.status==='active'?48:210;
+    if((fr+i*19)%iv===0)spark(a,b);
   });
-  if(frame%85===0){const t=['market_scout','trend_analyst','deep_diver'];spawnParticle('memory',t[Math.floor(Math.random()*t.length)]);}
+  if(fr%88===0){const t=['market_scout','trend_analyst','deep_diver'];spark('memory',t[Math.floor(Math.random()*t.length)]);}
   requestAnimationFrame(loop);
 }
-loop();
 
-function renderAgents(){
-  document.getElementById('agent-list').innerHTML=AGENT_DEFS.map(a=>{
-    const st=agentStatuses[a.key],status=st?st.status:'unknown';
-    const badge=status==='active'?'ON':status==='rate_limited'?'LIMITED':'—';
-    return`<div class="agent-row ${status}" onclick="toggleFb('fb-${a.key}')"><div class="a-dot ${status}"></div><div style="flex:1;min-width:0;"><div class="a-name">${a.name}</div><div style="font-size:9px;color:#333;">${a.fallbacks[0]}</div></div><div class="a-badge ${status}">${badge}</div></div><div class="fallback" id="fb-${a.key}">${a.fallbacks.map(f=>`<span>${f}</span>`).join('<br>')}</div>`;
+// sidebar
+function renderA(){
+  document.getElementById('alist').innerHTML=ADEFS.map(a=>{
+    const st=statuses[a.key],s=st?st.status:'unknown';
+    const badge=s==='active'?'ON':s==='rate_limited'?'LIMITED':'—';
+    return`<div class="ar ${s}" onclick="toggleFb('fb-${a.key}')"><div class="ad ${s}"></div><div style="flex:1;min-width:0"><div class="an">${a.name}</div><div style="font-size:9px;color:#333">${a.fb[0]}</div></div><div class="ab ${s}">${badge}</div></div><div class="fb" id="fb-${a.key}">${a.fb.map(f=>`<span>${f}</span>`).join('<br>')}</div>`;
   }).join('');
 }
 function toggleFb(id){document.getElementById(id)?.classList.toggle('show');}
 
-function addFeed(agent,msg,color){
+function addFeed(ag,msg,c){
   const t=new Date().toTimeString().slice(0,5);
-  feedItems.unshift({agent,msg,color,t});
-  if(feedItems.length>25)feedItems.pop();
-  document.getElementById('feed').innerHTML=feedItems.map(f=>`<div class="feed-item"><div class="fd" style="background:${f.color}"></div><div><div class="ft"><strong>${f.agent}</strong> ${f.msg}</div><div class="ftime">${f.t}</div></div></div>`).join('');
+  feedLog.unshift({ag,msg,c,t});if(feedLog.length>28)feedLog.pop();
+  document.getElementById('feed').innerHTML=feedLog.map(f=>`<div class="fi"><div class="fd2" style="background:${f.c}"></div><div><div class="ft"><strong>${f.ag}</strong> ${f.msg}</div><div class="ftime">${f.t}</div></div></div>`).join('');
 }
 
-function setFilter(f,btn){
-  activeFilter=f;
-  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
-  const filtered=f==='all'?allResults:allResults.filter(r=>r.agent===f);
-  bubbles=[];filtered.slice(0,80).forEach(r=>addBubble(r));
-  document.getElementById('bubble-count').textContent=bubbles.length+' bubbles';
+function setF(f,btn){
+  filter=f;document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  const d=f==='all'?results:results.filter(r=>r.agent===f);
+  bubbles=[];d.slice(0,85).forEach(r=>addBubble(r));
+  document.getElementById('bc').textContent=bubbles.length+' bubbles';
 }
 
 async function fetchStats(){
   try{
     const d=await fetch('/api/stats').then(r=>r.json());
     document.getElementById('s-total').textContent=(d.total_results||0).toLocaleString();
-    agentStatuses=d.agents||{};
-    robots.forEach(r=>{const st=agentStatuses[r.key];if(st){const prev=r.status;r.status=st.status||'unknown';if(prev!=='active'&&r.status==='active')addFeed(r.name,'back online ✓',r.color);if(prev==='active'&&r.status==='rate_limited')addFeed(r.name,'rate limited → fallback',r.color);}});
-    const active=Object.values(agentStatuses).filter(s=>s.status==='active').length;
-    document.getElementById('s-active').textContent=active;
-    renderAgents();
-    const tick=document.getElementById('tick');tick.textContent='●';tick.style.color='#1d9e75';setTimeout(()=>tick.textContent='',400);
+    statuses=d.agents||{};
+    robots.forEach(r=>{const st=statuses[r.key];if(st){const prev=r.status;r.status=st.status||'unknown';if(prev!=='active'&&r.status==='active')addFeed(r.name,'back online ✓',r.color);if(prev==='active'&&r.status==='rate_limited')addFeed(r.name,'rate limited → fallback',r.color);}});
+    document.getElementById('s-active').textContent=Object.values(statuses).filter(s=>s.status==='active').length;
+    renderA();
+    const tk=document.getElementById('tick');tk.textContent='●';tk.style.color='#1d9e75';setTimeout(()=>tk.textContent='',400);
   }catch(e){}
 }
 
 async function fetchResults(){
   try{
     const data=await fetch('/api/results').then(r=>r.json());
-    const prev=allResults.length;allResults=data;
-    const topics=new Set(data.map(r=>r.topic));
-    document.getElementById('s-topics').textContent=topics.size;
-    if(data.length>prev&&prev>0){
-      const n=data[0];addBubble(n);
-      addFeed(AGENT_DEFS.find(a=>a.key===n.agent)?.name||n.agent,`"${(n.topic||'').slice(0,35)}"`,COLORS[n.agent]||'#7f77dd');
-    }else if(bubbles.length===0&&data.length>0){
-      const filtered=activeFilter==='all'?data:data.filter(r=>r.agent===activeFilter);
-      filtered.slice(0,80).forEach((r,i)=>setTimeout(()=>addBubble(r),i*25));
-    }
-    document.getElementById('bubble-count').textContent=bubbles.length+' bubbles';
+    const prev=results.length;results=data;
+    document.getElementById('s-topics').textContent=new Set(data.map(r=>r.topic)).size;
+    if(data.length>prev&&prev>0){const n=data[0];addBubble(n);addFeed(ADEFS.find(a=>a.key===n.agent)?.name||n.agent,`"${(n.topic||'').slice(0,32)}"`,C[n.agent]||'#7f77dd');}
+    else if(!bubbles.length&&data.length){const d=filter==='all'?data:data.filter(r=>r.agent===filter);d.slice(0,85).forEach((r,i)=>setTimeout(()=>addBubble(r),i*22));}
+    document.getElementById('bc').textContent=bubbles.length+' bubbles';
   }catch(e){}
 }
 
-renderAgents();fetchStats();fetchResults();
-addFeed('System','Obsidian graph online — click any bubble to read','#7f77dd');
+reposition();loop();
+renderA();fetchStats();fetchResults();
+addFeed('System','Obsidian graph online — click any bubble','#7f77dd');
 addFeed('Manager','Sequential pipeline active','#1d9e75');
 setInterval(fetchStats,5000);setInterval(fetchResults,10000);
 setInterval(()=>document.getElementById('s-time').textContent=new Date().toTimeString().slice(0,8),1000);
+setTimeout(()=>document.getElementById('hint').style.opacity='0',6000);
 </script>
 </body>
 </html>
