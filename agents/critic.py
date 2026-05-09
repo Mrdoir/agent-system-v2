@@ -1,8 +1,9 @@
 """
 AGENT 4: CRITIC - The Deep Thinker
-Uses: DeepSeek R1 (best free reasoning model) via OpenRouter
-+ Qwen3-235B fallback + Groq fallback
-Scores research, extracts per-agent feedback, saves learning for next cycle.
+Primary:   DeepSeek R1 + Qwen3-235B + Llama via OpenRouter (loops all 3)
+Fallback1: Groq (Llama 3.3 70B)
+Fallback2: Cerebras (Llama 3.3 70B — separate quota)
+Order: OpenRouter models → Groq → Cerebras
 """
 
 import os
@@ -14,22 +15,24 @@ from utils.database import save_result, get_do_not_repeat, save_critic_feedback
 
 class CriticAgent(BaseAgent):
     NAME = "critic"
-    PROVIDER = "DeepSeek R1 (reasoning) via OpenRouter"
+    PROVIDER = "DeepSeek R1 (reasoning) via OpenRouter + Groq + Cerebras"
 
     def __init__(self):
         super().__init__()
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.api_key_2 = os.getenv("OPENROUTER_API_KEY_2", "")
         self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
+
         self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
         self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
+        self.cerebras_endpoint = "https://api.cerebras.ai/v1/chat/completions"
 
-        # Best reasoning models — DeepSeek R1 thinks step by step
         self.reasoning_models = [
-    "deepseek/deepseek-r1:free",          # Best reasoning - DeepSeek R1
-    "qwen/qwen3-235b-a22b:free",          # Qwen3 235B - second best
-    "meta-llama/llama-3.3-70b-instruct:free",  # Fast fallback
-]
+            "deepseek/deepseek-r1:free",
+            "qwen/qwen3-235b-a22b:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+        ]
 
     def build_eval_prompt(self, topic: str, research_content: str) -> str:
         do_not_repeat = get_do_not_repeat()
@@ -101,19 +104,6 @@ Be ruthless. Generic = worthless. Specific = valuable."""
             for model in self.reasoning_models:
                 try:
                     log("critic", f"Trying reasoning model: {model}")
-                    payload = {
-                        "model": model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": "You are an elite research critic. Think deeply and carefully before scoring. Be specific, honest, and ruthless about quality."
-                            },
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": 2000,
-                        "temperature": 0.2  # Low temp for consistent, logical scoring
-                    }
-
                     resp = requests.post(
                         self.endpoint,
                         headers={
@@ -122,45 +112,50 @@ Be ruthless. Generic = worthless. Specific = valuable."""
                             "HTTP-Referer": "https://agent-system.local",
                             "X-Title": "Research Critic"
                         },
-                        json=payload,
-                        timeout=90  # Reasoning models need more time to think
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": "You are an elite research critic. Think deeply and carefully before scoring. Be specific, honest, and ruthless about quality."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            "max_tokens": 2000,
+                            "temperature": 0.2
+                        },
+                        timeout=90
                     )
-
                     if resp.status_code == 429:
                         log("critic", f"{model} rate limited, trying next...")
                         continue
                     if resp.status_code != 200:
                         log("critic", f"{model} failed: HTTP {resp.status_code}")
                         continue
-
                     data = resp.json()
                     if "choices" not in data:
-                        log("critic", f"{model} bad response: {data}")
+                        log("critic", f"{model} bad response")
                         continue
-
                     text = data["choices"][0]["message"]["content"]
-                    log("critic", f"Critic success with: {model}")
+                    log("critic", f"✓ Success with: {model}")
                     return {"success": True, "text": text}
-
                 except Exception as e:
                     log("critic", f"{model} error: {e}")
                     continue
 
-        return {"success": False, "error": "All OpenRouter models failed"}
+        return {"success": False, "rate_limited": True}
 
-    def call_groq(self, prompt: str) -> dict:
-        if not self.groq_key:
-            return {"success": False, "error": "No Groq key"}
+    def _call_openai_compat(self, prompt: str, endpoint: str, api_key: str, model: str, provider_name: str) -> dict:
+        """Generic caller for OpenAI-compatible endpoints (Groq, Cerebras, etc.)"""
+        if not api_key:
+            return {"success": False, "error": f"No {provider_name} key"}
         try:
-            log("critic", "Trying Groq fallback for critic...")
+            log("critic", f"Trying {provider_name} fallback...")
             resp = requests.post(
-                self.groq_endpoint,
+                endpoint,
                 headers={
-                    "Authorization": f"Bearer {self.groq_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": "You are an elite research critic. Be specific, honest, and ruthless about quality."},
                         {"role": "user", "content": prompt}
@@ -175,13 +170,12 @@ Be ruthless. Generic = worthless. Specific = valuable."""
             if resp.status_code != 200:
                 return {"success": False, "error": f"HTTP {resp.status_code}"}
             text = resp.json()["choices"][0]["message"]["content"]
-            log("critic", "Groq fallback succeeded!")
+            log("critic", f"✓ {provider_name} fallback succeeded")
             return {"success": True, "text": text}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def extract_score(self, text: str, label: str = "OVERALL QUALITY SCORE") -> int:
-        """Extract a score from the critic's response."""
         for line in text.split("\n"):
             if label in line:
                 try:
@@ -192,7 +186,6 @@ Be ruthless. Generic = worthless. Specific = valuable."""
         return 5
 
     def extract_section(self, text: str, section: str) -> str:
-        """Extract a section from the critic's response."""
         lines = text.split("\n")
         capturing = False
         result = []
@@ -208,7 +201,6 @@ Be ruthless. Generic = worthless. Specific = valuable."""
         return " ".join(result[:3])
 
     def extract_agent_feedback(self, text: str, agent_label: str) -> dict:
-        """Extract per-agent feedback block."""
         lines = text.split("\n")
         in_section = False
         score = 5
@@ -236,34 +228,38 @@ Be ruthless. Generic = worthless. Specific = valuable."""
                 elif "Improvement:" in line:
                     improvement = line.split(":", 1)[-1].strip()
 
-        return {
-            "score": score,
-            "strength": strength,
-            "weakness": weakness,
-            "improvement": improvement
-        }
+        return {"score": score, "strength": strength, "weakness": weakness, "improvement": improvement}
 
     def evaluate(self, topic: str, research_content: str) -> dict:
-        """Evaluate research and extract per-agent feedback."""
         if self.is_rate_limited():
             return {"success": False, "rate_limited": True}
 
         prompt = self.build_eval_prompt(topic, research_content)
 
-        # Try OpenRouter reasoning models first
+        # 1. Try OpenRouter reasoning models
         result = self.call_openrouter(prompt)
+
+        # 2. Groq fallback
         if not result["success"]:
-            result = self.call_groq(prompt)
+            result = self._call_openai_compat(
+                prompt, self.groq_endpoint, self.groq_key,
+                "llama-3.3-70b-versatile", "groq"
+            )
+
+        # 3. Cerebras final fallback
+        if not result["success"]:
+            result = self._call_openai_compat(
+                prompt, self.cerebras_endpoint, self.cerebras_key,
+                "llama-3.3-70b", "cerebras"
+            )
 
         if not result["success"]:
-            return {"success": False, "error": "All critic models failed"}
+            log("critic", "⚠️ All providers exhausted (OpenRouter, Groq, Cerebras)")
+            return {"success": False, "error": "All critic providers failed"}
 
         text = result["text"]
-
-        # Extract overall score
         overall_score = self.extract_score(text, "OVERALL QUALITY SCORE")
 
-        # Extract per-agent feedback and save to DB
         agent_map = {
             "market_scout": "MARKET SCOUT FEEDBACK",
             "trend_analyst": "TREND ANALYST FEEDBACK",
