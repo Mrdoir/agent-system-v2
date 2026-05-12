@@ -1,69 +1,103 @@
 """
-BASE AGENT - Shared logic for all research agents.
-Handles rate limit tracking, file saving, API calls.
-Now saves to persistent SQLite database.
+BASE AGENT v2 — rate limit state stored in Postgres (not state/rate_limits.json)
+Survives Render restarts. Everything else identical to original.
 """
 
 import os
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 from utils.logger import log
-from utils.database import save_result, update_agent_status
+from utils.database import save_result, update_agent_status, get_conn
 
 
 class BaseAgent:
     NAME = "base_agent"
     PROVIDER = "unknown"
-    RATE_LIMIT_FILE = "state/rate_limits.json"
 
     def __init__(self):
-        Path("state").mkdir(exist_ok=True)
-        self._load_rate_limit_state()
+        pass  # No more JSON file setup needed
 
-    def _load_rate_limit_state(self):
-        if Path(self.RATE_LIMIT_FILE).exists():
-            with open(self.RATE_LIMIT_FILE) as f:
-                self._rl_state = json.load(f)
-        else:
-            self._rl_state = {}
-
-    def _save_rate_limit_state(self):
-        with open(self.RATE_LIMIT_FILE, "w") as f:
-            json.dump(self._rl_state, f, indent=2)
+    # ── RATE LIMIT (Postgres) ─────────────────────────────────────
 
     def set_rate_limited(self, reset_minutes=60):
         reset_at = (datetime.now() + timedelta(minutes=reset_minutes)).isoformat()
-        self._rl_state[self.NAME] = {"limited": True, "reset_at": reset_at}
-        self._save_rate_limit_state()
-        update_agent_status(self.NAME, "rate_limited")
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO agent_status (agent, status, rate_limit_until, last_run)
+                VALUES (%s, 'rate_limited', %s, %s)
+                ON CONFLICT (agent) DO UPDATE SET
+                    status = 'rate_limited',
+                    rate_limit_until = EXCLUDED.rate_limit_until
+            """, (self.NAME, reset_at, datetime.now().isoformat()))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            log(self.NAME, f"set_rate_limited DB error: {e}")
         log(self.NAME, f"Rate limited. Will auto-resume at {reset_at}")
 
     def clear_rate_limit(self):
-        if self.NAME in self._rl_state:
-            del self._rl_state[self.NAME]
-            self._save_rate_limit_state()
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE agent_status SET status = 'active', rate_limit_until = NULL
+                WHERE agent = %s
+            """, (self.NAME,))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            log(self.NAME, f"clear_rate_limit DB error: {e}")
 
-    def is_rate_limited(self):
-        self._load_rate_limit_state()
-        entry = self._rl_state.get(self.NAME)
-        if not entry:
-            return False
-        reset_at = datetime.fromisoformat(entry["reset_at"])
-        if datetime.now() >= reset_at:
-            self.clear_rate_limit()
-            update_agent_status(self.NAME, "active")
-            log(self.NAME, "Rate limit reset. Back online ✓")
-            return False
-        return True
+    def is_rate_limited(self) -> bool:
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT status, rate_limit_until FROM agent_status WHERE agent = %s",
+                (self.NAME,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
 
-    def minutes_until_reset(self):
-        entry = self._rl_state.get(self.NAME)
-        if not entry:
+            if not row:
+                return False
+            status, reset_at = row
+            if status != "rate_limited" or not reset_at:
+                return False
+
+            if datetime.now() >= datetime.fromisoformat(reset_at):
+                self.clear_rate_limit()
+                update_agent_status(self.NAME, "active")
+                log(self.NAME, "Rate limit reset. Back online ✓")
+                return False
+            return True
+        except Exception as e:
+            log(self.NAME, f"is_rate_limited DB error: {e}")
+            return False  # Don't block agents on DB errors
+
+    def minutes_until_reset(self) -> int:
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT rate_limit_until FROM agent_status WHERE agent = %s",
+                (self.NAME,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            if not row or not row[0]:
+                return 0
+            delta = datetime.fromisoformat(row[0]) - datetime.now()
+            return max(0, int(delta.total_seconds() / 60))
+        except:
             return 0
-        reset_at = datetime.fromisoformat(entry["reset_at"])
-        delta = reset_at - datetime.now()
-        return max(0, int(delta.total_seconds() / 60))
+
+    # ── SAVE / API ────────────────────────────────────────────────
 
     def save_to_db(self, topic: str, content: str, score: int = 0) -> str:
         save_result(self.NAME, topic, content, score)
@@ -73,20 +107,17 @@ class BaseAgent:
     def call_api(self, prompt: str) -> dict:
         raise NotImplementedError
 
-    def build_prompt(self, topic: str) -> str:
+    def build_prompt(self, topic: str, agent_name: str = None) -> str:
         raise NotImplementedError
 
     def research(self, topic: str) -> dict:
-        prompt = self.build_prompt(topic)
+        prompt = self.build_prompt(topic, agent_name=self.NAME)
         result = self.call_api(prompt)
-
         if result.get("rate_limited"):
             self.set_rate_limited()
             return {"success": False, "rate_limited": True}
-
         if not result["success"]:
             update_agent_status(self.NAME, "error")
             return {"success": False, "error": result.get("error", "Unknown error")}
-
         self.save_to_db(topic, result["text"])
         return {"success": True, "content": result["text"], "file": f"db:{self.NAME}"}
