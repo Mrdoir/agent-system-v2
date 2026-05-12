@@ -1,4 +1,4 @@
-"""
+""" 
 TOPIC ROTATOR v2 — rotation state stored in Postgres (not state/rotation_state.json)
 Survives Render restarts. Everything else identical to original.
 """
