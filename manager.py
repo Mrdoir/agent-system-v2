@@ -1,6 +1,6 @@
 """
 MANAGER AGENT v7
-All fixes based on reading every file in the codebase:
+All fixes based on reading every file in the codebase: 
 
 1. task_queue / completed / last_summary_date → Postgres (manager_state table)
 2. rate limits → Postgres (via base_agent.py fix — agent_status.rate_limit_until)
