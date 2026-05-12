@@ -34,8 +34,8 @@ class MarketScout(BaseAgent):
         self.cerebras_endpoint = "https://api.cerebras.ai/v1/chat/completions"
         self.cerebras_model = "llama-3.3-70b"
 
-    def build_prompt(self, topic: str) -> str:
-        memory_context = get_context_for_prompt(topic)
+    def build_prompt(self, topic: str, agent_name: str = None) -> str:
+        memory_context = get_context_for_prompt(topic, agent_name=agent_name or self.NAME)
         web_results = search_web(f"{topic} app complaints 2026")
         reddit_results = search_reddit(topic)
         web_context = format_search_results(web_results + reddit_results)
