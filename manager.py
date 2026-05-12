@@ -1,9 +1,17 @@
 """
-MANAGER AGENT - Fixed Version
-Fixes:
-1. Skip topics that already have 5+ results
-2. Ensure all results get scored
-3. Much larger topic pool (100+ topics)
+MANAGER AGENT v7
+All fixes based on reading every file in the codebase:
+
+1. task_queue / completed / last_summary_date → Postgres (manager_state table)
+2. rate limits → Postgres (via base_agent.py fix — agent_status.rate_limit_until)
+3. rotation state → Postgres (via topic_rotator.py fix)
+4. logs/ writes removed → stdout only (Render captures it)
+5. agent_name passed to build_prompt() → critic feedback injected per-agent
+   (memory_context.get_context_for_prompt already supports agent_name= param)
+6. 100-topic TOPIC_POOL preserved + seeded into Postgres research_topics table
+7. MAX_RESULTS_PER_TOPIC guard preserved
+8. Weekly synthesis agent preserved
+9. rotate_topics() now returns bool — handled correctly
 """
 
 from dotenv import load_dotenv
@@ -16,6 +24,7 @@ import schedule
 import threading
 from datetime import datetime, date
 from pathlib import Path
+
 from agents.market_scout import MarketScout
 from agents.trend_analyst import TrendAnalyst
 from agents.deep_diver import DeepDiver
@@ -25,18 +34,16 @@ from agents.synthesis_agent import SynthesisAgent
 from utils.logger import log, log_manager
 from utils.database import (
     init_db, save_result, get_total_results,
-    update_agent_status, get_insights
+    update_agent_status, get_insights, get_conn
 )
 from utils.notifier import notify_high_score, notify_daily_summary
+from utils.topic_rotator import rotate_topics
 
-RESEARCH_TOPICS_FILE = "research_topics.json"
-STATE_FILE = "state/manager_state.json"
-MAX_RESULTS_PER_TOPIC = 5  # Stop after 5 results per topic
 Path("state").mkdir(exist_ok=True)
 
-# 100+ diverse topics pool
+MAX_RESULTS_PER_TOPIC = 5
+
 TOPIC_POOL = [
-    # Productivity
     "most complained about productivity apps May 2026",
     "why do people abandon to-do list apps",
     "calendar app problems power users face",
@@ -47,8 +54,6 @@ TOPIC_POOL = [
     "email management app failures",
     "file organization tool gaps",
     "password manager user frustrations",
-    
-    # Freelancers & Remote Work
     "freelancer invoicing pain points 2026",
     "remote work tool fatigue 2026",
     "client communication problems freelancers",
@@ -59,8 +64,6 @@ TOPIC_POOL = [
     "time zone management for remote teams",
     "async communication tool gaps 2026",
     "freelancer onboarding client problems",
-    
-    # Finance & Money
     "personal finance app user complaints 2026",
     "budgeting app abandonment reasons",
     "expense tracking app problems",
@@ -71,8 +74,6 @@ TOPIC_POOL = [
     "salary negotiation tool gaps",
     "financial goal tracking app problems",
     "bill payment reminder app gaps",
-    
-    # Health & Wellness
     "mental health app user complaints 2026",
     "meditation app dropout reasons",
     "sleep tracking app accuracy problems",
@@ -83,8 +84,6 @@ TOPIC_POOL = [
     "chronic illness management app gaps",
     "women health app missing features",
     "senior citizen health app gaps",
-    
-    # Learning & Education
     "language learning app dropout reasons",
     "online course completion rate problems",
     "skill learning app gaps 2026",
@@ -95,8 +94,6 @@ TOPIC_POOL = [
     "flashcard app user frustrations",
     "certificate and credential tracking gaps",
     "professional development app gaps",
-    
-    # Social & Communication
     "social media overwhelm solutions needed",
     "community building tool gaps 2026",
     "group chat app fatigue problems",
@@ -107,8 +104,6 @@ TOPIC_POOL = [
     "gift tracking and gifting app gaps",
     "contact management app failures",
     "social accountability app gaps",
-    
-    # Creators & Side Hustles
     "content creator tool gaps 2026",
     "YouTube channel management pain points",
     "newsletter tool user complaints",
@@ -119,8 +114,6 @@ TOPIC_POOL = [
     "online store management pain points",
     "affiliate marketing tool gaps",
     "creator analytics tool problems",
-    
-    # Developer & Tech
     "developer productivity tool gaps 2026",
     "code review tool pain points",
     "API testing tool complaints",
@@ -131,8 +124,6 @@ TOPIC_POOL = [
     "open source project management gaps",
     "technical interview prep app gaps",
     "developer community platform problems",
-    
-    # Small Business
     "small business CRM pain points 2026",
     "restaurant management software gaps",
     "retail inventory management problems",
@@ -143,8 +134,6 @@ TOPIC_POOL = [
     "small business accounting pain points",
     "e-commerce analytics tool gaps",
     "local business discovery app gaps",
-    
-    # Niche & Emerging
     "AI writing tool user complaints 2026",
     "AI image tool workflow gaps",
     "voice memo and transcription app gaps",
@@ -168,10 +157,114 @@ TOPIC_POOL = [
 ]
 
 
+# ─────────────────────────────────────────────
+# POSTGRES STATE  (replaces all state/*.json files)
+# ─────────────────────────────────────────────
+
+def init_manager_tables():
+    """Create manager_state and research_topics tables if not exist."""
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS manager_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS research_topics (
+                topic    TEXT PRIMARY KEY,
+                added_at TEXT NOT NULL
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        log_manager("Postgres state tables ready")
+    except Exception as e:
+        log_manager(f"init_manager_tables error: {e}")
+
+
+def db_get(key: str, default=None):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM manager_state WHERE key = %s", (key,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return json.loads(row[0]) if row else default
+    except Exception as e:
+        log_manager(f"db_get({key}) error: {e}")
+        return default
+
+
+def db_set(key: str, value):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO manager_state (key, value)
+            VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (key, json.dumps(value, default=str)))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        log_manager(f"db_set({key}) error: {e}")
+
+
+def db_get_topics() -> list:
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT topic FROM research_topics ORDER BY added_at")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [r[0] for r in rows]
+    except Exception as e:
+        log_manager(f"db_get_topics error: {e}")
+        return []
+
+
+def db_add_topic(topic: str):
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO research_topics (topic, added_at)
+            VALUES (%s, %s)
+            ON CONFLICT (topic) DO NOTHING
+        """, (topic, datetime.now().isoformat()))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        log_manager(f"db_add_topic error: {e}")
+
+
+def seed_topics_to_db():
+    """Seed TOPIC_POOL into Postgres on first run."""
+    existing = db_get_topics()
+    if len(existing) >= len(TOPIC_POOL):
+        return
+    for t in TOPIC_POOL:
+        db_add_topic(t)
+    log_manager(f"Seeded {len(TOPIC_POOL)} topics into Postgres")
+
+
+# ─────────────────────────────────────────────
+# MANAGER
+# ─────────────────────────────────────────────
+
 class ManagerAgent:
+
     def __init__(self):
         init_db()
-        self.state = self._load_state()
+        init_manager_tables()
+        seed_topics_to_db()
+
         self.agents = {
             "market_scout": MarketScout(),
             "trend_analyst": TrendAnalyst(),
@@ -180,29 +273,21 @@ class ManagerAgent:
         self.critic = CriticAgent()
         self.memory = MemoryAgent()
         self.synthesis = SynthesisAgent()
-        self.task_queue = self.state.get("task_queue", [])
-        self.completed = self.state.get("completed", [])
-        self.last_summary_date = self.state.get("last_summary_date", "")
-        log_manager("Manager v6 — Fixed: No repetition + 100 topics + proper scoring")
 
-    def _load_state(self):
-        if Path(STATE_FILE).exists():
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        return {}
+        # ALL state from Postgres — survives Render restarts
+        self.task_queue = db_get("task_queue", [])
+        self.completed = db_get("completed", [])
+        self.last_summary_date = db_get("last_summary_date", "")
+
+        log_manager("Manager v7 — Postgres state + per-agent critic feedback + 100 topics")
 
     def _save_state(self):
-        with open(STATE_FILE, "w") as f:
-            json.dump({
-                "task_queue": self.task_queue,
-                "completed": self.completed,
-                "last_summary_date": self.last_summary_date
-            }, f, indent=2)
+        db_set("task_queue", self.task_queue)
+        db_set("completed", self.completed)
+        db_set("last_summary_date", self.last_summary_date)
 
     def get_topic_result_count(self, topic: str) -> int:
-        """Check how many results already exist for this topic."""
         try:
-            from utils.database import get_conn
             conn = get_conn()
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM results WHERE topic = %s", (topic,))
@@ -214,18 +299,22 @@ class ManagerAgent:
             return 0
 
     def build_task_queue(self):
-        """Build queue from 100+ topic pool, skip over-researched topics."""
-        # Save topics to file
-        with open(RESEARCH_TOPICS_FILE, "w") as f:
-            json.dump({"topics": TOPIC_POOL}, f, indent=2)
+        """Build queue from Postgres topics, skip over-researched ones."""
+        rotated = rotate_topics()
+        if rotated:
+            log_manager("Topics rotated — fresh research targets added!")
+
+        topics = db_get_topics()
+        if not topics:
+            seed_topics_to_db()
+            topics = db_get_topics()
 
         queued_topics = {t["topic"] for t in self.task_queue if t["status"] == "pending"}
         added = 0
 
-        for topic in TOPIC_POOL:
+        for topic in topics:
             if topic in queued_topics:
                 continue
-            # Skip if already has enough results
             count = self.get_topic_result_count(topic)
             if count >= MAX_RESULTS_PER_TOPIC:
                 continue
@@ -233,92 +322,110 @@ class ManagerAgent:
             added += 1
 
         pending = len([t for t in self.task_queue if t["status"] == "pending"])
-        log_manager(f"Queue: {pending} pending topics ({added} new added, max {MAX_RESULTS_PER_TOPIC} results/topic)")
+        log_manager(f"Queue: {pending} pending ({added} new added, max {MAX_RESULTS_PER_TOPIC}/topic)")
         self._save_state()
 
     def run_sequential_pipeline(self, topic: str) -> dict:
-        """Sequential pipeline with guaranteed scoring."""
+        """
+        Sequential pipeline: Scout → Analyst → Diver → Critic → Memory
+        KEY FIX: agent_name passed to build_prompt() so
+        memory_context.get_context_for_prompt(topic, agent_name=NAME)
+        injects each agent's personal critic feedback into their prompt.
+        """
         log_manager(f"🔬 Pipeline: {topic}")
         all_findings = []
 
-        # STEP 1 — Market Scout
+        # ── STEP 1 — Market Scout ──
         scout = self.agents["market_scout"]
         if not scout.is_rate_limited():
-            log_manager(f"[SCOUT] Researching...")
-            scout_result = scout.call_api(scout.build_prompt(topic))
-            if scout_result.get("success"):
-                scout.save_to_db(topic, scout_result["text"])
-                all_findings.append(f"## SCOUT:\n{scout_result['text']}")
-                log_manager(f"[SCOUT] ✓")
+            log_manager("[SCOUT] Researching...")
+            # agent_name="market_scout" → critic feedback injected via memory_context
+            prompt = scout.build_prompt(topic, agent_name="market_scout")
+            result = scout.call_api(prompt)
+            if result.get("success"):
+                scout.save_to_db(topic, result["text"])
+                all_findings.append(f"## SCOUT:\n{result['text']}")
+                log_manager("[SCOUT] ✓")
                 time.sleep(3)
-            elif scout_result.get("rate_limited"):
+            elif result.get("rate_limited"):
                 scout.set_rate_limited()
+                log_manager("[SCOUT] Rate limited")
+        else:
+            log_manager("[SCOUT] Rate limited, skipping")
 
-        # STEP 2 — Trend Analyst
+        # ── STEP 2 — Trend Analyst ──
         analyst = self.agents["trend_analyst"]
         if not analyst.is_rate_limited():
-            log_manager(f"[ANALYST] Researching...")
+            log_manager("[ANALYST] Researching...")
             prior = all_findings[0] if all_findings else ""
-            prompt = analyst.build_prompt(topic)
+            prompt = analyst.build_prompt(topic, agent_name="trend_analyst")
             if prior:
-                prompt += f"\n\nSCOUT FOUND: {prior[:500]}\nGo deeper, don't repeat."
-            analyst_result = analyst.call_api(prompt)
-            if analyst_result.get("success"):
-                analyst.save_to_db(topic, analyst_result["text"])
-                all_findings.append(f"## ANALYST:\n{analyst_result['text']}")
-                log_manager(f"[ANALYST] ✓")
+                prompt += f"\n\nSCOUT ALREADY FOUND:\n{prior[:600]}\nDon't repeat. Go deeper on trends."
+            result = analyst.call_api(prompt)
+            if result.get("success"):
+                analyst.save_to_db(topic, result["text"])
+                all_findings.append(f"## ANALYST:\n{result['text']}")
+                log_manager("[ANALYST] ✓")
                 time.sleep(3)
-            elif analyst_result.get("rate_limited"):
+            elif result.get("rate_limited"):
                 analyst.set_rate_limited()
+                log_manager("[ANALYST] Rate limited")
+        else:
+            log_manager("[ANALYST] Rate limited, skipping")
 
-        # STEP 3 — Deep Diver
+        # ── STEP 3 — Deep Diver ──
         diver = self.agents["deep_diver"]
         if not diver.is_rate_limited():
-            log_manager(f"[DIVER] Researching...")
-            prior = "\n\n".join(all_findings)
-            prompt = diver.build_prompt(topic)
+            log_manager("[DIVER] Researching...")
+            prior = "\n\n".join(all_findings) if all_findings else ""
+            prompt = diver.build_prompt(topic, agent_name="deep_diver")
             if prior:
-                prompt += f"\n\nPREVIOUS FINDINGS: {prior[:800]}\nFind what they missed."
-            diver_result = diver.call_api(prompt)
-            if diver_result.get("success"):
-                diver.save_to_db(topic, diver_result["text"])
-                all_findings.append(f"## DIVER:\n{diver_result['text']}")
-                log_manager(f"[DIVER] ✓")
+                prompt += f"\n\nPREVIOUS AGENTS FOUND:\n{prior[:900]}\nFind what they missed. Be contrarian."
+            result = diver.call_api(prompt)
+            if result.get("success"):
+                diver.save_to_db(topic, result["text"])
+                all_findings.append(f"## DIVER:\n{result['text']}")
+                log_manager("[DIVER] ✓")
                 time.sleep(3)
-            elif diver_result.get("rate_limited"):
+            elif result.get("rate_limited"):
                 diver.set_rate_limited()
+                log_manager("[DIVER] Rate limited")
+        else:
+            log_manager("[DIVER] Rate limited, skipping")
 
         if not all_findings:
+            log_manager("No findings — all agents rate limited")
             return {"success": False}
 
-        # STEP 4 — Critic (ALWAYS score everything)
+        # ── STEP 4 — Critic ──
         combined = "\n\n---\n\n".join(all_findings)
-        score = 5  # default score if critic fails
+        score = 5  # default if critic fails
 
         if not self.critic.is_rate_limited():
-            log_manager(f"[CRITIC] Scoring...")
+            log_manager("[CRITIC] Scoring...")
+            # critic.evaluate() handles its own prompt building
             crit_result = self.critic.evaluate(topic, combined)
             if crit_result["success"]:
                 score = crit_result["score"]
                 save_result("critic", topic, crit_result["text"], score)
                 log_manager(f"[CRITIC] ✓ Score: {score}/10")
                 notify_high_score("Critic", topic, score, crit_result["text"][:300])
-
-                # Update all agent results with the critic score
                 self._update_scores_for_topic(topic, score)
 
-                # STEP 5 — Memory
+                # ── STEP 5 — Memory ──
                 if score >= 4 and not self.memory.is_rate_limited():
+                    # memory.synthesize() takes (new_content, topic)
                     mem_result = self.memory.synthesize(combined, topic)
                     if mem_result["success"]:
-                        log_manager(f"[MEMORY] ✓ Novelty: {mem_result.get('novelty_score','?')}/10")
+                        log_manager(f"[MEMORY] ✓ Novelty: {mem_result.get('novelty_score', '?')}/10")
+        else:
+            log_manager("[CRITIC] Rate limited, skipping")
 
         return {"success": True, "score": score}
 
     def _update_scores_for_topic(self, topic: str, score: int):
-        """Update score for all agent results on this topic."""
+        """Backfill critic score onto all unscored agent results for this topic."""
         try:
-            from utils.database import get_conn
             conn = get_conn()
             cur = conn.cursor()
             cur.execute(
@@ -343,19 +450,15 @@ class ManagerAgent:
             self.build_task_queue()
             pending = [t for t in self.task_queue if t["status"] == "pending"]
 
-        # Process up to 3 topics per cycle
         processed = 0
         for task in pending:
             if processed >= 3:
                 break
 
             topic = task["topic"]
-
-            # Double-check — skip if already has enough results
             count = self.get_topic_result_count(topic)
             if count >= MAX_RESULTS_PER_TOPIC:
                 task["status"] = "done"
-                log_manager(f"Skipping {topic[:40]} — already has {count} results")
                 self._save_state()
                 continue
 
@@ -368,10 +471,10 @@ class ManagerAgent:
                     "timestamp": datetime.now().isoformat(),
                     "score": result.get("score", 0)
                 })
-                log_manager(f"✅ Done: {topic[:50]}")
+                log_manager(f"✅ Done: {topic[:60]}")
                 processed += 1
             else:
-                log_manager(f"⏸️ All agents rate limited — waiting for next cycle")
+                log_manager("⏸️ All rate limited — waiting for next cycle")
                 break
 
             self._save_state()
@@ -391,7 +494,8 @@ class ManagerAgent:
         self._save_state()
 
     def start(self):
-        log_manager("🚀 Manager v6 — 100 topics, no repetition, proper scoring!")
+        log_manager("🚀 Manager v7 — Postgres state, per-agent feedback, 100 topics")
+
         try:
             from telegram_bot import start_bot_thread
             start_bot_thread()
@@ -413,6 +517,7 @@ class ManagerAgent:
             log_manager(f"Dashboard error: {e}")
 
         self.run_cycle()
+
         schedule.every(15).minutes.do(self.run_cycle)
         schedule.every().day.at("09:00").do(self.send_daily_summary)
         schedule.every().sunday.at("09:00").do(self.synthesis.synthesize)
