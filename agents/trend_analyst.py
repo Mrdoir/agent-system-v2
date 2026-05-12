@@ -33,8 +33,8 @@ class TrendAnalyst(BaseAgent):
         self.gemini_model = "gemini-2.0-flash"
         self.gemini_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent"
 
-    def build_prompt(self, topic: str) -> str:
-        memory_context = get_context_for_prompt(topic)
+    def build_prompt(self, topic: str, agent_name: str = None) -> str:
+        memory_context = get_context_for_prompt(topic, agent_name=agent_name or self.NAME)
         web_results = search_web(f"{topic} trend growth 2026")
         web_context = format_search_results(web_results)
 
