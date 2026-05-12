@@ -32,7 +32,7 @@ body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;
 .add-btn:hover{background:var(--purple)25;border-color:var(--purple)}
 
 /* MAIN */
-canvas{display:block;position:fixed;top:44px;left:0;right:255px;bottom:28px}
+canvas{display:block;position:fixed;top:44px;left:0;width:calc(100vw - 255px);height:calc(100vh - 72px)}
 
 /* RIGHT SIDEBAR */
 .sb{position:fixed;right:0;top:44px;bottom:28px;width:255px;background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
@@ -264,10 +264,6 @@ function resize(){
   const sb=255,bot=28,top=44;
   cv.width=window.innerWidth-sb;
   cv.height=window.innerHeight-top-bot;
-  cv.style.top=top+'px';
-  cv.style.left='0';
-  cv.style.right=sb+'px';
-  cv.style.bottom=bot+'px';
   reposition();
 }
 resize();window.addEventListener('resize',resize);
@@ -364,6 +360,7 @@ class Robot{
 }
 
 function reposition(){
+  if(!cv.width||!cv.height)return;
   const W=cv.width,H=cv.height;
   const slots=[
     {key:'market_scout',x:W*.13,y:H*.25},
@@ -474,6 +471,7 @@ function addBubble(res){
 }
 
 function seedBubbles(data){
+  if(!robots.length){reposition();}
   bubbles=[];
   // Evenly seed across all agents (up to 20 per agent)
   const byAgent={};
@@ -784,7 +782,7 @@ async function fetchResults(){
       const n=data[0];
       addBubble(n);
       addFeed(AGENTS.find(a=>a.key===n.agent)?.name||n.agent,`"${(n.topic||'').slice(0,30)}"`,C[n.agent]||'#7f77dd');
-    } else if(!bubbles.length&&data.length){
+    } else if(bubbles.length<10&&data.length){
       seedBubbles(filter==='all'?data:data.filter(r=>r.agent===filter));
     }
     document.getElementById('bc').textContent=bubbles.length+' bubbles';
@@ -799,8 +797,11 @@ async function fetchInsights(){
 }
 
 // ── BOOT ───────────────────────────────────────────────────────
-reposition();loop();
-renderAgents();fetchStats();fetchResults();fetchInsights();
+loop();
+renderAgents();
+fetchStats();
+fetchResults();
+fetchInsights();
 addFeed('System','Research Hub online — click any bubble to read','#7f77dd');
 addFeed('Manager','Sequential pipeline: Scout→Analyst→Diver→Critic→Memory','#1d9e75');
 setInterval(fetchStats,5000);
