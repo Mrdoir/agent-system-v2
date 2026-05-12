@@ -35,8 +35,8 @@ class DeepDiver(BaseAgent):
         self.groq_model = "qwen-qwq-32b"
         self.cerebras_model = "llama-3.3-70b"
 
-    def build_prompt(self, topic: str) -> str:
-        memory_context = get_context_for_prompt(topic)
+    def build_prompt(self, topic: str, agent_name: str = None) -> str:
+        memory_context = get_context_for_prompt(topic, agent_name=agent_name or self.NAME)
         web_results = search_web(f"{topic} why fails opportunity 2026")
         web_context = format_search_results(web_results)
 
