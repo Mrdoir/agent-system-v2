@@ -1,4 +1,4 @@
-"""
+""" 
 LOGGER v2 — stdout only. No log file writes.
 Render captures stdout automatically in its log viewer.
 Writing to logs/ on Render free tier is pointless (ephemeral + no viewer).
