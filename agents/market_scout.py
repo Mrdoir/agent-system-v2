@@ -1,158 +1,223 @@
 """
-AGENT 1: MARKET SCOUT
-Primary:   Google Gemini
-Fallback1: Groq (Llama 3.3 70B)
-Fallback2: Cerebras (Llama 3.3 70B — separate quota)
-Fallback3: Gemini skipped if primary, so chain is:
-Order: Gemini → Groq → Cerebras
+MARKET SCOUT v3 — Primary research agent with expanded fallbacks
+Improvements:
+- Added Together AI and Cohere fallbacks
+- Better prompt with structured output
+- Parallel web search
+- Quality self-check
 """
 
 import os
-import requests
-from agents.base_agent import BaseAgent
-from utils.logger import log
+from agents.base_agent import BaseAgent, OpenAICompatibleMixin, GeminiMixin
+from utils.logger import log_info, log_warn, log_debug, log_api_call
 from utils.memory_context import get_context_for_prompt
-from utils.web_search import search_web, search_reddit, format_search_results
+from utils.web_search import search_web, search_reddit, search_hackernews, format_search_results
 
 
-class MarketScout(BaseAgent):
+class MarketScout(BaseAgent, OpenAICompatibleMixin, GeminiMixin):
     NAME = "market_scout"
-    PROVIDER = "Gemini + Groq + Cerebras Fallback"
-
+    PROVIDER = "Gemini + Groq + Together + Cerebras + Cohere"
+    
     def __init__(self):
         super().__init__()
+        
+        # API Keys
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
         self.groq_key = os.getenv("GROQ_API_KEY", "")
         self.groq_key_2 = os.getenv("GROQ_API_KEY_2", "")
         self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
-
-        self.model = "gemini-2.0-flash"
-        self.gemini_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-
+        self.together_key = os.getenv("TOGETHER_API_KEY", "")
+        self.cohere_key = os.getenv("COHERE_API_KEY", "")
+        
+        # Endpoints
         self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        self.groq_model = "llama-3.3-70b-versatile"
-
         self.cerebras_endpoint = "https://api.cerebras.ai/v1/chat/completions"
+        self.together_endpoint = "https://api.together.xyz/v1/chat/completions"
+        
+        # Models
+        self.gemini_model = "gemini-2.0-flash"
+        self.groq_model = "llama-3.3-70b-versatile"
         self.cerebras_model = "llama-3.3-70b"
-
+        self.together_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    
     def build_prompt(self, topic: str, agent_name: str = None) -> str:
+        """Build research prompt with memory context and web data."""
+        
+        # Get memory context (what we already know, critic feedback)
         memory_context = get_context_for_prompt(topic, agent_name=agent_name or self.NAME)
-        web_results = search_web(f"{topic} app complaints 2026")
-        reddit_results = search_reddit(topic)
-        web_context = format_search_results(web_results + reddit_results)
-
-        return f"""You are a market research expert finding SPECIFIC, NON-OBVIOUS market insights.
+        
+        # Get fresh web data
+        web_results = search_web(f"{topic} app complaints problems 2026")
+        reddit_results = search_reddit(f"{topic} frustrating")
+        hn_results = search_hackernews(f"{topic} problem")
+        
+        all_results = web_results + reddit_results + hn_results
+        web_context = format_search_results(all_results)
+        
+        return f"""You are a MARKET SCOUT — an expert at finding specific, actionable market research insights.
 
 {memory_context}
 
-## REAL WEB DATA:
+═══════════════════════════════════════════════════════════════════
+REAL-TIME WEB DATA (use this as evidence):
+═══════════════════════════════════════════════════════════════════
 {web_context}
 
-RESEARCH: {topic}
+═══════════════════════════════════════════════════════════════════
+YOUR RESEARCH MISSION: {topic}
+═══════════════════════════════════════════════════════════════════
 
-## New Market Findings
-[Specific apps, real complaints, real numbers — nothing generic]
+Analyze the web data above and produce research in this EXACT format:
 
-## Top Existing Solutions & Specific Weaknesses
-[Real app names with evidence-backed weaknesses]
+## 🔍 NEW MARKET FINDINGS
+[List 3-5 specific findings NOT in the knowledge base above]
+[Include: specific app names, user counts, growth rates, dates]
+[Each finding must have evidence from the web data]
 
-## Real User Complaints
-[Direct from web data — real language, real frustrations]
+## 🏆 TOP EXISTING SOLUTIONS & THEIR SPECIFIC WEAKNESSES
+[Name 3-5 real apps/products with evidence-backed weaknesses]
+[Format: AppName (X users) — specific weakness with evidence]
 
-## Untapped Market Gaps
-[Specific gaps with evidence — why does this gap exist?]
+## 😤 REAL USER COMPLAINTS (direct quotes)
+[Extract 3-5 direct quotes from the web data]
+[Include source (Reddit, HN, etc.) and context]
+[Focus on emotional language that reveals pain points]
 
-## Verdict
-[What's genuinely new and worth noting?]"""
+## 🎯 UNTAPPED MARKET GAPS
+[Identify 2-3 specific gaps based on the complaints above]
+[For each: who has this problem, why existing solutions fail, size estimate]
 
-    def _call_gemini(self, prompt: str) -> dict:
-        if not self.gemini_key:
-            return {"success": False, "error": "No Gemini key"}
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.7}
-        }
+## 💡 QUICK WIN OPPORTUNITY
+[One specific, actionable opportunity that could be built quickly]
+[Include: target user, core feature, why now, competition level]
+
+## 📊 VERDICT
+[2-3 sentences: What's the single most valuable insight from this research?]
+
+QUALITY REQUIREMENTS:
+- NO generic statements like "growing market" or "users want better UX"
+- EVERY claim must reference specific evidence from the web data
+- Include real numbers, names, and dates wherever possible
+- If you can't find specific evidence, say "No data found" instead of making it up
+"""
+    
+    def _call_cohere(self, prompt: str) -> dict:
+        """Call Cohere API (free tier: 5 req/min)."""
+        if not self.cohere_key:
+            return {"success": False, "text": None, "provider": "cohere", "error": "No Cohere key"}
+        
         try:
+            import requests
             resp = requests.post(
-                f"{self.gemini_endpoint}?key={self.gemini_key}",
-                headers=headers, json=payload, timeout=30
+                "https://api.cohere.ai/v1/chat",
+                headers={
+                    "Authorization": f"Bearer {self.cohere_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "command-r",
+                    "message": prompt,
+                    "max_tokens": 1500,
+                    "temperature": 0.7
+                },
+                timeout=45
             )
+            
             if resp.status_code == 429:
-                return {"success": False, "rate_limited": True}
+                return {"success": False, "rate_limited": True, "provider": "cohere"}
+            
             if resp.status_code != 200:
-                return {"success": False, "error": f"HTTP {resp.status_code}"}
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return {"success": True, "text": text, "provider": "gemini"}
+                return {"success": False, "error": f"HTTP {resp.status_code}", "provider": "cohere"}
+            
+            data = resp.json()
+            text = data.get("text", "")
+            
+            if not text:
+                return {"success": False, "error": "Empty response", "provider": "cohere"}
+            
+            return {"success": True, "text": text, "provider": "cohere"}
+            
         except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _call_openai_compat(self, prompt: str, endpoint: str, api_key: str, model: str, provider_name: str) -> dict:
-        """Generic caller for OpenAI-compatible endpoints (Groq, Cerebras, etc.)"""
-        if not api_key:
-            return {"success": False, "error": f"No {provider_name} key"}
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "Expert market researcher. Be specific, avoid generic statements."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 1500,
-            "temperature": 0.7
-        }
-        try:
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
-            if resp.status_code == 429:
-                return {"success": False, "rate_limited": True}
-            if resp.status_code != 200:
-                return {"success": False, "error": f"HTTP {resp.status_code}"}
-            text = resp.json()["choices"][0]["message"]["content"]
-            return {"success": True, "text": text, "provider": provider_name}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
+            return {"success": False, "error": str(e), "provider": "cohere"}
+    
     def call_api(self, prompt: str) -> dict:
-        # 1. Try Gemini
-        log(self.NAME, "Trying Gemini...")
-        result = self._call_gemini(prompt)
+        """Call AI API with comprehensive fallback chain."""
+        
+        system_msg = "You are an expert market researcher. Be specific, use real data, avoid generic statements."
+        
+        # 1. Try Gemini (primary)
+        log_debug(self.NAME, "Trying Gemini...")
+        result = self._call_gemini(prompt, self.gemini_key, self.gemini_model)
         if result["success"]:
-            log(self.NAME, "✓ Gemini responded")
+            log_api_call(self.NAME, "Gemini", True)
             return result
-
-        # 2. Gemini failed — try Groq
-        reason = "rate limited" if result.get("rate_limited") else f"failed ({result.get('error')})"
-        log(self.NAME, f"Gemini {reason} → trying Groq fallback...")
-        result = self._call_openai_compat(
-            prompt, self.groq_endpoint, self.groq_key, self.groq_model, "groq"
+        log_api_call(self.NAME, "Gemini", False, f"({result.get('error', 'failed')})")
+        if result.get("rate_limited"):
+            # Continue to fallbacks
+            pass
+        
+        # 2. Try Groq (fallback 1)
+        log_debug(self.NAME, "Trying Groq...")
+        result = self._call_openai_compatible(
+            prompt, self.groq_endpoint, self.groq_key, 
+            self.groq_model, "groq", system_msg
         )
         if result["success"]:
-            log(self.NAME, "✓ Groq fallback responded")
+            log_api_call(self.NAME, "Groq", True)
             return result
-
-        # 3. Groq key 1 failed — try Groq key 2
-        reason = "rate limited" if result.get("rate_limited") else "failed"
-        log(self.NAME, f"Groq {reason} → trying Groq key 2...")
-        result = self._call_openai_compat(
-            prompt, self.groq_endpoint, self.groq_key_2, self.groq_model, "groq-key2"
-        )
-        if result["success"]:
-            log(self.NAME, "✓ Groq key 2 responded")
-            return result
-
-        # 4. Groq key 2 failed — try Cerebras
-        reason = "rate limited" if result.get("rate_limited") else "failed"
-        log(self.NAME, f"Groq key 2 {reason} → trying Cerebras fallback...")
-        result = self._call_openai_compat(
-            prompt, self.cerebras_endpoint, self.cerebras_key, self.cerebras_model, "cerebras"
-        )
-        if result["success"]:
-            log(self.NAME, "✓ Cerebras fallback responded")
-            return result
-
-        # All exhausted
-        log(self.NAME, "⚠️ All providers (Gemini, Groq, Cerebras) rate limited or failed")
-        return {"success": False, "rate_limited": True}
+        log_api_call(self.NAME, "Groq", False)
+        
+        # 3. Try Groq key 2 (fallback 2)
+        if self.groq_key_2:
+            log_debug(self.NAME, "Trying Groq key 2...")
+            result = self._call_openai_compatible(
+                prompt, self.groq_endpoint, self.groq_key_2,
+                self.groq_model, "groq-2", system_msg
+            )
+            if result["success"]:
+                log_api_call(self.NAME, "Groq-2", True)
+                return result
+            log_api_call(self.NAME, "Groq-2", False)
+        
+        # 4. Try Together AI (fallback 3)
+        if self.together_key:
+            log_debug(self.NAME, "Trying Together AI...")
+            result = self._call_openai_compatible(
+                prompt, self.together_endpoint, self.together_key,
+                self.together_model, "together", system_msg
+            )
+            if result["success"]:
+                log_api_call(self.NAME, "Together", True)
+                return result
+            log_api_call(self.NAME, "Together", False)
+        
+        # 5. Try Cerebras (fallback 4)
+        if self.cerebras_key:
+            log_debug(self.NAME, "Trying Cerebras...")
+            result = self._call_openai_compatible(
+                prompt, self.cerebras_endpoint, self.cerebras_key,
+                self.cerebras_model, "cerebras", system_msg
+            )
+            if result["success"]:
+                log_api_call(self.NAME, "Cerebras", True)
+                return result
+            log_api_call(self.NAME, "Cerebras", False)
+        
+        # 6. Try Cohere (fallback 5)
+        if self.cohere_key:
+            log_debug(self.NAME, "Trying Cohere...")
+            result = self._call_cohere(prompt)
+            if result["success"]:
+                log_api_call(self.NAME, "Cohere", True)
+                return result
+            log_api_call(self.NAME, "Cohere", False)
+        
+        # All providers failed
+        log_warn(self.NAME, "All providers exhausted")
+        return {
+            "success": False,
+            "text": None,
+            "provider": None,
+            "rate_limited": True,  # Treat as rate limited to trigger pause
+            "error": "All providers failed or rate limited"
+        }

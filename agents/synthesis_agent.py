@@ -1,145 +1,299 @@
 """
-AGENT 6: WEEKLY SYNTHESIS AGENT
-Runs every Sunday automatically.
-Reads ALL results from the past week, finds patterns,
-generates top opportunities and sends to Telegram.
+SYNTHESIS AGENT v3 — Weekly reports with actionable recommendations
+Improvements:
+- Better opportunity scoring
+- Competition analysis
+- Build recommendations
+- Multi-platform notification
 """
 
 import os
-import requests
 from datetime import datetime, timedelta
-from utils.logger import log
-from utils.notifier import send_telegram
+from utils.logger import log_info, log_warn, log_debug
+from utils.database import get_results, get_insights, save_result
+from utils.notifier import notify_weekly_synthesis
+from utils.memory_context import get_weekly_synthesis_context
 
 
 class SynthesisAgent:
     NAME = "synthesis"
     PROVIDER = "Groq (Llama 3.3 70B)"
-
+    
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY", "")
-        self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        self.model = "llama-3.3-70b-versatile"
-
+        self.api_key_2 = os.getenv("GROQ_API_KEY_2", "")
+        self.together_key = os.getenv("TOGETHER_API_KEY", "")
+        
+        self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
+        self.together_endpoint = "https://api.together.xyz/v1/chat/completions"
+        
+        self.groq_model = "llama-3.3-70b-versatile"
+        self.together_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    
     def get_weekly_results(self) -> list:
+        """Get all results from the past week."""
         try:
-            from utils.database import get_results
             all_results = get_results(limit=500)
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
             return [r for r in all_results if r.get("created_at", "") >= week_ago]
         except Exception as e:
-            log(self.NAME, f"Error fetching results: {e}")
+            log_warn(self.NAME, f"Error fetching results: {e}")
             return []
-
+    
     def get_top_insights(self) -> list:
+        """Get top insights from the past week."""
         try:
-            from utils.database import get_insights
             insights = get_insights(limit=20)
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
             weekly = [i for i in insights if i.get("created_at", "") >= week_ago]
             return sorted(weekly, key=lambda x: x.get("novelty_score", 0), reverse=True)[:5]
         except Exception as e:
-            log(self.NAME, f"Error fetching insights: {e}")
+            log_warn(self.NAME, f"Error fetching insights: {e}")
             return []
-
+    
     def build_synthesis_prompt(self, results: list, insights: list) -> str:
-        high_scored = sorted(results, key=lambda x: x.get("score", 0), reverse=True)[:20]
-        results_text = "\n\n".join([
-            f"[{r.get('agent','?')} | Score:{r.get('score',0)}/10 | {r.get('topic','')}]\n{r.get('content','')[:400]}"
-            for r in high_scored
-        ])
-        insights_text = "\n\n".join([
-            f"[Novelty:{i.get('novelty_score',0)}/10]\n{i.get('content','')[:300]}"
-            for i in insights
-        ])
+        """Build the weekly synthesis prompt."""
+        
+        # Get context
+        context = get_weekly_synthesis_context(results, insights)
+        
+        # Calculate stats
+        total_results = len(results)
+        avg_score = sum(r.get("score", 0) for r in results) / max(len(results), 1)
+        high_quality = len([r for r in results if r.get("score", 0) >= 7])
+        unique_topics = len(set(r.get("topic", "") for r in results))
+        
+        return f"""You are a STRATEGIC RESEARCH SYNTHESIZER analyzing a week of market research.
 
-        return f"""You are a strategic research synthesizer. Analyze this week's research and extract the most valuable actionable insights.
+═══════════════════════════════════════════════════════════════════
+WEEKLY STATS
+═══════════════════════════════════════════════════════════════════
+- Total Research Results: {total_results}
+- Average Quality Score: {avg_score:.1f}/10
+- High-Quality Results (7+): {high_quality}
+- Unique Topics Covered: {unique_topics}
 
-THIS WEEK'S TOP RESEARCH ({len(results)} total results):
-{results_text}
+{context}
 
-THIS WEEK'S TOP INSIGHTS:
-{insights_text}
+═══════════════════════════════════════════════════════════════════
+YOUR SYNTHESIS TASK
+═══════════════════════════════════════════════════════════════════
 
-Generate a weekly synthesis report in this EXACT format:
+Create a comprehensive weekly synthesis. Use this EXACT format:
 
 ## 🏆 TOP 3 MARKET OPPORTUNITIES THIS WEEK
-[For each: specific problem, who has it, why current solutions fail, opportunity size]
+
+### Opportunity 1: [Name]
+- **Problem**: [Specific problem from research]
+- **Target User**: [Who has this problem - be specific]
+- **Why Now**: [What changed to make this timely]
+- **Existing Solutions**: [What's failing and why]
+- **Opportunity Size**: [Estimate with reasoning]
+- **Evidence**: [Quotes/data from research]
+- **Build Difficulty**: [Low/Medium/High]
+- **Competition**: [Low/Medium/High]
+
+### Opportunity 2: [Name]
+[Same format]
+
+### Opportunity 3: [Name]
+[Same format]
 
 ## 😤 TOP 3 MOST COMPLAINED ABOUT PROBLEMS
-[Real specific complaints that keep appearing — with evidence]
 
-## 💡 TOP 3 APP IDEAS (based on research)
-[For each: name, one-line description, target user, why now, competition LOW/MED/HIGH]
+1. **[Problem]**
+   - Source: [Where we found this]
+   - User Quote: "[Direct quote if available]"
+   - Frequency: [How often this appeared]
+   - Unmet Need: [What users actually want]
+
+2. **[Problem]**
+   [Same format]
+
+3. **[Problem]**
+   [Same format]
+
+## 💡 TOP 3 APP/PRODUCT IDEAS
+
+### Idea 1: [Name]
+- One-line: [What it does in one sentence]
+- Target: [Specific user segment]
+- Core Feature: [The ONE thing that matters]
+- Why It Wins: [Unfair advantage over existing]
+- MVP Scope: [What to build first]
+- Competition: [Low/Medium/High]
+- Confidence: [1-10 with reasoning]
+
+### Idea 2: [Name]
+[Same format]
+
+### Idea 3: [Name]
+[Same format]
 
 ## 📈 STRONGEST TREND THIS WEEK
-[One specific trend with the most evidence — why it matters]
+
+**Trend**: [Name the trend]
+- Evidence: [What data supports this]
+- Growth Signal: [Specific metrics if available]
+- Who's Driving It: [User segment]
+- Timeline: [When to act]
+- Opportunity Window: [How long until saturated]
 
 ## ⚠️ WHAT TO AVOID
-[Markets or ideas research shows are oversaturated or failing]
+
+### Saturated/Declining Areas:
+- [Area 1]: [Why to avoid]
+- [Area 2]: [Why to avoid]
+
+### Common Mistakes We Saw:
+- [Mistake 1]
+- [Mistake 2]
 
 ## 🎯 WEEKLY VERDICT
-[2-3 sentences: the single biggest opportunity found this week and why]
 
-Be specific. Use real examples from the research. No generic statements."""
+**The Single Most Important Finding:**
+[2-3 sentences on the #1 actionable insight from this week]
 
+**Recommended Next Steps:**
+1. [Specific action]
+2. [Specific action]
+3. [Specific action]
+
+═══════════════════════════════════════════════════════════════════
+QUALITY REQUIREMENTS:
+- Be specific — names, numbers, quotes
+- Prioritize actionable over interesting
+- Include evidence from research
+- Don't recommend anything already oversaturated
+═══════════════════════════════════════════════════════════════════
+"""
+    
+    def _call_api(self, prompt: str) -> dict:
+        """Call API with fallbacks."""
+        import requests
+        
+        system_msg = "Strategic research synthesizer. Be specific and actionable. Prioritize quality over quantity."
+        
+        # Try Groq
+        for api_key in [self.api_key, self.api_key_2]:
+            if not api_key:
+                continue
+            
+            try:
+                log_debug(self.NAME, "Trying Groq...")
+                resp = requests.post(
+                    self.groq_endpoint,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.groq_model,
+                        "messages": [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "max_tokens": 3000,
+                        "temperature": 0.4
+                    },
+                    timeout=90
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if "choices" in data:
+                        return {"success": True, "text": data["choices"][0]["message"]["content"]}
+                
+            except Exception as e:
+                log_debug(self.NAME, f"Groq error: {e}")
+        
+        # Try Together
+        if self.together_key:
+            try:
+                log_debug(self.NAME, "Trying Together...")
+                resp = requests.post(
+                    self.together_endpoint,
+                    headers={
+                        "Authorization": f"Bearer {self.together_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.together_model,
+                        "messages": [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "max_tokens": 3000,
+                        "temperature": 0.4
+                    },
+                    timeout=90
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if "choices" in data:
+                        return {"success": True, "text": data["choices"][0]["message"]["content"]}
+                        
+            except Exception as e:
+                log_debug(self.NAME, f"Together error: {e}")
+        
+        return {"success": False, "error": "All providers failed"}
+    
     def synthesize(self) -> dict:
-        log(self.NAME, "Starting weekly synthesis...")
+        """
+        Generate weekly synthesis report.
+        
+        Returns: {"success": bool, "synthesis": str, "stats": dict}
+        """
+        log_info(self.NAME, "Starting weekly synthesis...")
+        
+        # Get data
         results = self.get_weekly_results()
         insights = self.get_top_insights()
-
+        
         if len(results) < 5:
-            log(self.NAME, f"Not enough data ({len(results)} results). Skipping.")
+            log_warn(self.NAME, f"Not enough data ({len(results)} results). Skipping.")
             return {"success": False, "reason": "Not enough data"}
-
-        log(self.NAME, f"Synthesizing {len(results)} results + {len(insights)} insights")
+        
+        log_info(self.NAME, f"Synthesizing {len(results)} results + {len(insights)} insights")
+        
+        # Build prompt and call API
         prompt = self.build_synthesis_prompt(results, insights)
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": "Strategic research synthesizer. Be specific and actionable."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 2000,
-            "temperature": 0.4
-        }
-
+        result = self._call_api(prompt)
+        
+        if not result.get("success"):
+            log_warn(self.NAME, f"Synthesis failed: {result.get('error')}")
+            return result
+        
+        synthesis_text = result["text"]
+        
+        # Save to database
         try:
-            resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=60)
-            if resp.status_code != 200:
-                return {"success": False, "error": f"HTTP {resp.status_code}"}
-
-            text = resp.json()["choices"][0]["message"]["content"]
-
-            # Save to database
-            try:
-                from utils.database import save_result
-                save_result("synthesis", f"Weekly Report {datetime.now().strftime('%Y-%m-%d')}", text, score=10)
-            except Exception as e:
-                log(self.NAME, f"Save error: {e}")
-
-            # Send to Telegram
-            self._send_to_telegram(text, len(results))
-            log(self.NAME, "Weekly synthesis complete!")
-            return {"success": True, "text": text}
-
+            save_result(
+                "synthesis",
+                f"Weekly Report {datetime.now().strftime('%Y-%m-%d')}",
+                synthesis_text,
+                score=10  # Weekly synthesis is always high value
+            )
         except Exception as e:
-            log(self.NAME, f"Error: {e}")
-            return {"success": False, "error": str(e)}
-
-    def _send_to_telegram(self, text: str, result_count: int):
-        header = (
-            f"📊 *WEEKLY RESEARCH SYNTHESIS*\n"
-            f"_{datetime.now().strftime('%B %d, %Y')}_\n"
-            f"_Based on {result_count} research results_\n\n"
-        )
-        full_message = header + text
-        chunks = [full_message[i:i+4000] for i in range(0, len(full_message), 4000)]
-        for i, chunk in enumerate(chunks):
-            send_telegram(chunk if i == 0 else f"_(part {i+1}/{len(chunks)})_\n\n{chunk}")
-        log(self.NAME, f"Sent {len(chunks)} Telegram message(s)")
+            log_warn(self.NAME, f"Save error: {e}")
+        
+        # Send notifications
+        notify_weekly_synthesis(synthesis_text, len(results))
+        
+        log_info(self.NAME, "Weekly synthesis complete!")
+        
+        # Calculate stats
+        stats = {
+            "total_results": len(results),
+            "avg_score": sum(r.get("score", 0) for r in results) / max(len(results), 1),
+            "high_quality": len([r for r in results if r.get("score", 0) >= 7]),
+            "unique_topics": len(set(r.get("topic", "") for r in results)),
+            "insights_count": len(insights)
+        }
+        
+        return {
+            "success": True,
+            "synthesis": synthesis_text,
+            "stats": stats
+        }

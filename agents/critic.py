@@ -1,282 +1,365 @@
 """
-AGENT 4: CRITIC - The Deep Thinker
-Primary:   DeepSeek R1 + Qwen3-235B + Llama via OpenRouter (loops all 3)
-Fallback1: Groq (Llama 3.3 70B)
-Fallback2: Cerebras (Llama 3.3 70B — separate quota)
-Order: OpenRouter models → Groq → Cerebras
+CRITIC v3 — Quality evaluator with better feedback extraction
+Improvements:
+- More robust score/feedback parsing
+- Per-agent feedback storage
+- Pattern detection for do-not-repeat
+- Quality metrics tracking
 """
 
 import os
-import requests
-from agents.base_agent import BaseAgent
-from utils.logger import log
-from utils.database import save_result, get_do_not_repeat, save_critic_feedback
+import re
+from agents.base_agent import BaseAgent, OpenAICompatibleMixin
+from utils.logger import log_info, log_warn, log_debug, log_api_call
+from utils.database import (
+    get_do_not_repeat, save_critic_feedback, add_do_not_repeat,
+    update_agent_status
+)
 
 
-class CriticAgent(BaseAgent):
+class CriticAgent(BaseAgent, OpenAICompatibleMixin):
     NAME = "critic"
-    PROVIDER = "DeepSeek R1 (reasoning) via OpenRouter + Groq + Cerebras"
-
+    PROVIDER = "DeepSeek R1 + Qwen3 + Llama (OpenRouter) + Groq + Cerebras"
+    
     def __init__(self):
         super().__init__()
-        self.api_key = os.getenv("OPENROUTER_API_KEY", "")
-        self.api_key_2 = os.getenv("OPENROUTER_API_KEY_2", "")
+        
+        # API Keys
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+        self.openrouter_key_2 = os.getenv("OPENROUTER_API_KEY_2", "")
         self.groq_key = os.getenv("GROQ_API_KEY", "")
         self.groq_key_2 = os.getenv("GROQ_API_KEY_2", "")
         self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
-
-        self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
+        
+        # Endpoints
+        self.openrouter_endpoint = "https://openrouter.ai/api/v1/chat/completions"
         self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
         self.cerebras_endpoint = "https://api.cerebras.ai/v1/chat/completions"
-
+        
+        # Reasoning models (prioritize deep thinking)
         self.reasoning_models = [
             "deepseek/deepseek-r1:free",
             "qwen/qwen3-235b-a22b:free",
             "meta-llama/llama-3.3-70b-instruct:free",
         ]
-
+        
+        self.groq_model = "llama-3.3-70b-versatile"
+        self.cerebras_model = "llama-3.3-70b"
+    
     def build_eval_prompt(self, topic: str, research_content: str) -> str:
+        """Build evaluation prompt for critic."""
+        
         do_not_repeat = get_do_not_repeat()
-        dnr_list = "\n".join(f"- {p}" for p in do_not_repeat[:20]) if do_not_repeat else "None yet"
+        dnr_list = "\n".join(f"- {p}" for p in do_not_repeat[:25]) if do_not_repeat else "None yet"
+        
+        return f"""You are an ELITE RESEARCH CRITIC with deep reasoning capabilities.
+Your job is to evaluate research quality and provide specific, actionable feedback.
 
-        return f"""You are an elite research critic with deep reasoning capabilities.
-Your job is to evaluate multi-agent research and extract specific, actionable feedback for each agent.
-
+═══════════════════════════════════════════════════════════════════
 TOPIC BEING RESEARCHED: {topic}
+═══════════════════════════════════════════════════════════════════
 
-COMBINED RESEARCH FROM ALL AGENTS:
-{research_content}
+═══════════════════════════════════════════════════════════════════
+RESEARCH CONTENT TO EVALUATE:
+═══════════════════════════════════════════════════════════════════
+{research_content[:5000]}
 
-OVERUSED PATTERNS TO PENALIZE:
+═══════════════════════════════════════════════════════════════════
+PATTERNS THAT INDICATE LOW QUALITY (penalize if found):
+═══════════════════════════════════════════════════════════════════
 {dnr_list}
 
-Think deeply and carefully before scoring. Consider:
-- Is this research actually specific or just generic AI knowledge?
-- Does it use real web data or just hallucinate facts?
-- Are the insights actionable or vague?
-- What's genuinely new vs what everyone already knows?
+═══════════════════════════════════════════════════════════════════
+YOUR EVALUATION TASK
+═══════════════════════════════════════════════════════════════════
 
-Respond in this EXACT format:
+Think carefully and evaluate. Respond in this EXACT format:
 
-## OVERALL QUALITY SCORE: [0-10]
-[2-3 sentences explaining the score honestly]
+## OVERALL QUALITY SCORE: [X]/10
+[2-3 sentences explaining the score with specific examples]
 
 ## MARKET SCOUT FEEDBACK
-Score: [0-10]
-Strength: [what Scout did well — be specific]
-Weakness: [what Scout missed or did poorly — be specific]
-Improvement: [exact instruction for Scout to improve next time]
+Score: [X]/10
+Strength: [What Scout did well — be specific, quote if possible]
+Weakness: [What Scout missed or did poorly — be specific]
+Improvement: [Exact instruction for Scout to improve next time]
 
 ## TREND ANALYST FEEDBACK
-Score: [0-10]
-Strength: [what Analyst did well — be specific]
-Weakness: [what Analyst missed or did poorly — be specific]
-Improvement: [exact instruction for Analyst to improve next time]
+Score: [X]/10
+Strength: [What Analyst did well — be specific]
+Weakness: [What Analyst missed — be specific]
+Improvement: [Exact instruction for Analyst to improve]
 
 ## DEEP DIVER FEEDBACK
-Score: [0-10]
-Strength: [what Diver did well — be specific]
-Weakness: [what Diver missed or did poorly — be specific]
-Improvement: [exact instruction for Diver to improve next time]
+Score: [X]/10
+Strength: [What Diver did well — be specific]
+Weakness: [What Diver missed — be specific]
+Improvement: [Exact instruction for Diver to improve]
 
 ## STRONG INSIGHTS (keep these)
 [List only genuinely specific, actionable, non-obvious findings]
+[Include why each is valuable]
 
 ## WEAK INSIGHTS (cut these)
-[List generic, vague, or obvious statements]
+[List generic, vague, or obvious statements that add no value]
 
 ## TOP 3 ACTIONABLE TAKEAWAYS
-[The 3 most useful, specific things someone could act on]
+[The 3 most useful, specific things someone could act on TODAY]
+1. 
+2. 
+3. 
 
-## PATTERNS TO ADD TO DO-NOT-REPEAT LIST
+## PATTERNS TO BLACKLIST
 [2-3 generic phrases from this output that should never appear again]
+- 
+- 
+- 
 
-## VERDICT
-[1 sentence: Is this research useful? What's the single most important finding?]
+## FINAL VERDICT
+[1 sentence: Is this research worth reading? What's the single most important finding?]
 
-Be ruthless. Generic = worthless. Specific = valuable."""
+═══════════════════════════════════════════════════════════════════
+SCORING GUIDE:
+- 9-10: Exceptional — specific, actionable, novel with hard evidence
+- 7-8: Good — mostly specific, some actionable insights  
+- 5-6: Average — mix of specific and generic
+- 3-4: Below Average — mostly generic statements
+- 1-2: Poor — no specific insights, all generic
 
-    def call_openrouter(self, prompt: str) -> dict:
-        keys = [k for k in [self.api_key, self.api_key_2] if k]
+Be ruthless. Generic = worthless. Specific = valuable.
+═══════════════════════════════════════════════════════════════════
+"""
+    
+    def _call_openrouter_reasoning(self, prompt: str) -> dict:
+        """Call OpenRouter with reasoning models."""
+        import requests
+        
+        keys = [k for k in [self.openrouter_key, self.openrouter_key_2] if k]
         if not keys:
             return {"success": False, "error": "No OpenRouter keys"}
-
+        
         for api_key in keys:
             for model in self.reasoning_models:
                 try:
-                    log("critic", f"Trying reasoning model: {model}")
+                    log_debug(self.NAME, f"Trying {model}...")
+                    
                     resp = requests.post(
-                        self.endpoint,
+                        self.openrouter_endpoint,
                         headers={
                             "Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json",
-                            "HTTP-Referer": "https://agent-system.local",
+                            "HTTP-Referer": "https://agent-research-hub.local",
                             "X-Title": "Research Critic"
                         },
                         json={
                             "model": model,
                             "messages": [
-                                {"role": "system", "content": "You are an elite research critic. Think deeply and carefully before scoring. Be specific, honest, and ruthless about quality."},
+                                {"role": "system", "content": "Elite research critic. Think deeply. Be specific and ruthless about quality."},
                                 {"role": "user", "content": prompt}
                             ],
-                            "max_tokens": 2000,
+                            "max_tokens": 2500,
                             "temperature": 0.2
                         },
                         timeout=90
                     )
+                    
                     if resp.status_code == 429:
-                        log("critic", f"{model} rate limited, trying next...")
+                        log_debug(self.NAME, f"{model} rate limited")
                         continue
+                    
                     if resp.status_code != 200:
-                        log("critic", f"{model} failed: HTTP {resp.status_code}")
+                        log_debug(self.NAME, f"{model} failed: HTTP {resp.status_code}")
                         continue
+                    
                     data = resp.json()
                     if "choices" not in data:
-                        log("critic", f"{model} bad response")
                         continue
+                    
                     text = data["choices"][0]["message"]["content"]
-                    log("critic", f"✓ Success with: {model}")
-                    return {"success": True, "text": text}
+                    log_api_call(self.NAME, model.split("/")[-1], True)
+                    return {"success": True, "text": text, "provider": model}
+                    
                 except Exception as e:
-                    log("critic", f"{model} error: {e}")
+                    log_debug(self.NAME, f"{model} error: {e}")
                     continue
-
+        
         return {"success": False, "rate_limited": True}
-
-    def _call_openai_compat(self, prompt: str, endpoint: str, api_key: str, model: str, provider_name: str) -> dict:
-        """Generic caller for OpenAI-compatible endpoints (Groq, Cerebras, etc.)"""
-        if not api_key:
-            return {"success": False, "error": f"No {provider_name} key"}
-        try:
-            log("critic", f"Trying {provider_name} fallback...")
-            resp = requests.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": "You are an elite research critic. Be specific, honest, and ruthless about quality."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "max_tokens": 2000,
-                    "temperature": 0.2
-                },
-                timeout=60
+    
+    def call_api(self, prompt: str) -> dict:
+        """Call AI API for evaluation."""
+        
+        system_msg = "Elite research critic. Think deeply. Be specific and ruthless about quality."
+        
+        # 1. Try OpenRouter reasoning models
+        result = self._call_openrouter_reasoning(prompt)
+        if result.get("success"):
+            return result
+        log_api_call(self.NAME, "OpenRouter", False)
+        
+        # 2. Try Groq
+        if self.groq_key:
+            log_debug(self.NAME, "Trying Groq...")
+            result = self._call_openai_compatible(
+                prompt, self.groq_endpoint, self.groq_key,
+                self.groq_model, "groq", system_msg, max_tokens=2500, temperature=0.2
             )
-            if resp.status_code == 429:
-                return {"success": False, "rate_limited": True}
-            if resp.status_code != 200:
-                return {"success": False, "error": f"HTTP {resp.status_code}"}
-            text = resp.json()["choices"][0]["message"]["content"]
-            log("critic", f"✓ {provider_name} fallback succeeded")
-            return {"success": True, "text": text}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
+            if result["success"]:
+                log_api_call(self.NAME, "Groq", True)
+                return result
+        
+        # 3. Try Groq key 2
+        if self.groq_key_2:
+            result = self._call_openai_compatible(
+                prompt, self.groq_endpoint, self.groq_key_2,
+                self.groq_model, "groq-2", system_msg, max_tokens=2500, temperature=0.2
+            )
+            if result["success"]:
+                log_api_call(self.NAME, "Groq-2", True)
+                return result
+        
+        # 4. Try Cerebras
+        if self.cerebras_key:
+            log_debug(self.NAME, "Trying Cerebras...")
+            result = self._call_openai_compatible(
+                prompt, self.cerebras_endpoint, self.cerebras_key,
+                self.cerebras_model, "cerebras", system_msg, max_tokens=2500, temperature=0.2
+            )
+            if result["success"]:
+                log_api_call(self.NAME, "Cerebras", True)
+                return result
+        
+        log_warn(self.NAME, "All providers exhausted")
+        return {"success": False, "rate_limited": True, "error": "All providers failed"}
+    
+    # ═══════════════════════════════════════════════════════════════
+    # FEEDBACK EXTRACTION
+    # ═══════════════════════════════════════════════════════════════
+    
     def extract_score(self, text: str, label: str = "OVERALL QUALITY SCORE") -> int:
+        """Extract score from evaluation text."""
         for line in text.split("\n"):
-            if label in line:
-                try:
-                    score = int(''.join(filter(str.isdigit, line.split(":")[-1][:3])))
+            if label.upper() in line.upper():
+                # Find digits in the line
+                numbers = re.findall(r'\d+', line)
+                if numbers:
+                    score = int(numbers[0])
                     return min(10, max(0, score))
-                except:
-                    pass
-        return 5
-
-    def extract_section(self, text: str, section: str) -> str:
-        lines = text.split("\n")
-        capturing = False
-        result = []
-        for line in lines:
-            if section in line:
-                capturing = True
-                continue
-            if capturing:
-                if line.startswith("##"):
-                    break
-                if line.strip():
-                    result.append(line.strip())
-        return " ".join(result[:3])
-
-    def extract_agent_feedback(self, text: str, agent_label: str) -> dict:
+        return 5  # Default
+    
+    def extract_agent_feedback(self, text: str, agent_keyword: str) -> dict:
+        """Extract feedback for a specific agent."""
+        feedback = {"score": 5, "strength": "", "weakness": "", "improvement": ""}
+        
         lines = text.split("\n")
         in_section = False
-        score = 5
-        strength = ""
-        weakness = ""
-        improvement = ""
-
-        for line in lines:
-            if agent_label in line and "##" in line:
+        
+        for i, line in enumerate(lines):
+            # Find the agent section
+            if agent_keyword.upper() in line.upper() and "FEEDBACK" in line.upper():
                 in_section = True
                 continue
+            
             if in_section:
-                if line.startswith("##") and agent_label not in line:
+                # Check if we've moved to next section
+                if line.strip().startswith("##"):
                     break
-                if "Score:" in line:
-                    try:
-                        score = int(''.join(filter(str.isdigit, line.split(":")[-1][:3])))
-                        score = min(10, max(0, score))
-                    except:
-                        pass
-                elif "Strength:" in line:
-                    strength = line.split(":", 1)[-1].strip()
-                elif "Weakness:" in line:
-                    weakness = line.split(":", 1)[-1].strip()
-                elif "Improvement:" in line:
-                    improvement = line.split(":", 1)[-1].strip()
-
-        return {"score": score, "strength": strength, "weakness": weakness, "improvement": improvement}
-
+                
+                line_lower = line.lower()
+                
+                if "score:" in line_lower:
+                    numbers = re.findall(r'\d+', line)
+                    if numbers:
+                        feedback["score"] = min(10, max(0, int(numbers[0])))
+                
+                elif "strength:" in line_lower:
+                    feedback["strength"] = line.split(":", 1)[-1].strip()[:500]
+                
+                elif "weakness:" in line_lower:
+                    feedback["weakness"] = line.split(":", 1)[-1].strip()[:500]
+                
+                elif "improvement:" in line_lower:
+                    feedback["improvement"] = line.split(":", 1)[-1].strip()[:500]
+        
+        return feedback
+    
+    def extract_blacklist_patterns(self, text: str) -> list:
+        """Extract patterns to add to do-not-repeat list."""
+        patterns = []
+        in_section = False
+        
+        for line in text.split("\n"):
+            if "PATTERNS TO BLACKLIST" in line.upper():
+                in_section = True
+                continue
+            
+            if in_section:
+                if line.strip().startswith("##"):
+                    break
+                
+                if line.strip().startswith("-"):
+                    pattern = line.strip("- ").strip()
+                    if len(pattern) > 10 and len(pattern) < 100:
+                        patterns.append(pattern)
+        
+        return patterns[:5]  # Max 5 patterns per evaluation
+    
+    def extract_takeaways(self, text: str) -> list:
+        """Extract top actionable takeaways."""
+        takeaways = []
+        in_section = False
+        
+        for line in text.split("\n"):
+            if "ACTIONABLE TAKEAWAY" in line.upper():
+                in_section = True
+                continue
+            
+            if in_section:
+                if line.strip().startswith("##"):
+                    break
+                
+                # Match numbered items
+                match = re.match(r'^\d+[\.\)]\s*(.+)', line.strip())
+                if match:
+                    takeaways.append(match.group(1).strip())
+        
+        return takeaways[:3]
+    
+    # ═══════════════════════════════════════════════════════════════
+    # MAIN EVALUATION
+    # ═══════════════════════════════════════════════════════════════
+    
     def evaluate(self, topic: str, research_content: str) -> dict:
+        """
+        Evaluate research and provide feedback.
+        Returns: {"success": bool, "score": int, "feedback": str, "takeaways": list}
+        """
         if self.is_rate_limited():
-            return {"success": False, "rate_limited": True}
-
+            return {"success": False, "error": "Rate limited", "rate_limited": True}
+        
+        # Build and call
         prompt = self.build_eval_prompt(topic, research_content)
-
-        # 1. Try OpenRouter reasoning models
-        result = self.call_openrouter(prompt)
-
-        # 2. Groq fallback
-        if not result["success"]:
-            result = self._call_openai_compat(
-                prompt, self.groq_endpoint, self.groq_key,
-                "llama-3.3-70b-versatile", "groq"
-            )
-
-        # 3. Groq key 2 fallback
-        if not result["success"]:
-            result = self._call_openai_compat(
-                prompt, self.groq_endpoint, self.groq_key_2,
-                "llama-3.3-70b-versatile", "groq-key2"
-            )
-
-        # 4. Cerebras final fallback
-        if not result["success"]:
-            result = self._call_openai_compat(
-                prompt, self.cerebras_endpoint, self.cerebras_key,
-                "llama-3.3-70b", "cerebras"
-            )
-
-        if not result["success"]:
-            log("critic", "⚠️ All providers exhausted (OpenRouter, Groq, Cerebras)")
-            return {"success": False, "error": "All critic providers failed"}
-
-        text = result["text"]
-        overall_score = self.extract_score(text, "OVERALL QUALITY SCORE")
-
-        agent_map = {
-            "market_scout": "MARKET SCOUT FEEDBACK",
-            "trend_analyst": "TREND ANALYST FEEDBACK",
-            "deep_diver": "DEEP DIVER FEEDBACK"
-        }
-
-        for agent_name, label in agent_map.items():
-            feedback = self.extract_agent_feedback(text, label)
-            if feedback["strength"] or feedback["weakness"]:
+        result = self.call_api(prompt)
+        
+        if result.get("rate_limited"):
+            self.set_rate_limited(provider=result.get("provider"))
+            return {"success": False, "rate_limited": True}
+        
+        if not result.get("success"):
+            return {"success": False, "error": result.get("error")}
+        
+        eval_text = result["text"]
+        
+        # Extract overall score
+        overall_score = self.extract_score(eval_text)
+        
+        # Extract and save per-agent feedback
+        for agent_name, keyword in [
+            ("market_scout", "MARKET SCOUT"),
+            ("trend_analyst", "TREND ANALYST"),
+            ("deep_diver", "DEEP DIVER"),
+        ]:
+            feedback = self.extract_agent_feedback(eval_text, keyword)
+            if feedback["score"] > 0 or feedback["strength"] or feedback["weakness"]:
                 save_critic_feedback(
                     agent=agent_name,
                     topic=topic,
@@ -285,12 +368,34 @@ Be ruthless. Generic = worthless. Specific = valuable."""
                     weakness=feedback["weakness"],
                     improvement=feedback["improvement"]
                 )
-                log("critic", f"Saved feedback for {agent_name}: {feedback['score']}/10")
-
-        return {"success": True, "text": text, "score": overall_score}
-
+                log_debug(self.NAME, f"Saved feedback for {agent_name}: {feedback['score']}/10")
+        
+        # Extract and save blacklist patterns
+        patterns = self.extract_blacklist_patterns(eval_text)
+        for pattern in patterns:
+            add_do_not_repeat(pattern)
+            log_debug(self.NAME, f"Added blacklist pattern: {pattern[:50]}")
+        
+        # Extract takeaways
+        takeaways = self.extract_takeaways(eval_text)
+        
+        # Save critic's own result
+        self.save_to_db(topic, eval_text, score=overall_score)
+        
+        log_info(self.NAME, f"Evaluated research: {overall_score}/10")
+        
+        return {
+            "success": True,
+            "score": overall_score,
+            "feedback": eval_text,
+            "takeaways": takeaways,
+            "provider": result.get("provider")
+        }
+    
     def research(self, topic: str) -> dict:
+        """Critic doesn't do research, use evaluate() instead."""
         return {"success": False, "error": "Use evaluate() instead"}
-
-    def call_api(self, prompt: str) -> dict:
-        return {"success": False, "error": "Use evaluate() instead"}
+    
+    def build_prompt(self, topic: str, agent_name: str = None) -> str:
+        """Not used directly - use build_eval_prompt."""
+        return ""
