@@ -21,6 +21,7 @@ class TrendAnalyst(BaseAgent):
     def __init__(self):
         super().__init__()
         self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.groq_key_2 = os.getenv("GROQ_API_KEY_2", "")
         self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
 
@@ -125,9 +126,19 @@ ANALYZE TRENDS FOR: {topic}
             log(self.NAME, "✓ Groq responded")
             return result
 
-        # 2. Groq failed — try Cerebras (same Llama model, separate quota)
+        # 2. Groq key 1 failed — try Groq key 2
         reason = "rate limited" if result.get("rate_limited") else "failed"
-        log(self.NAME, f"Groq {reason} → trying Cerebras fallback...")
+        log(self.NAME, f"Groq {reason} → trying Groq key 2...")
+        result = self._call_openai_compat(
+            prompt, self.groq_endpoint, self.groq_key_2, self.groq_model, "groq-key2"
+        )
+        if result["success"]:
+            log(self.NAME, "✓ Groq key 2 responded")
+            return result
+
+        # 3. Groq key 2 failed — try Cerebras
+        reason = "rate limited" if result.get("rate_limited") else "failed"
+        log(self.NAME, f"Groq key 2 {reason} → trying Cerebras fallback...")
         result = self._call_openai_compat(
             prompt, self.cerebras_endpoint, self.cerebras_key, self.cerebras_model, "cerebras"
         )

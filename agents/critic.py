@@ -22,6 +22,7 @@ class CriticAgent(BaseAgent):
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.api_key_2 = os.getenv("OPENROUTER_API_KEY_2", "")
         self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.groq_key_2 = os.getenv("GROQ_API_KEY_2", "")
         self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
 
         self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
@@ -246,7 +247,14 @@ Be ruthless. Generic = worthless. Specific = valuable."""
                 "llama-3.3-70b-versatile", "groq"
             )
 
-        # 3. Cerebras final fallback
+        # 3. Groq key 2 fallback
+        if not result["success"]:
+            result = self._call_openai_compat(
+                prompt, self.groq_endpoint, self.groq_key_2,
+                "llama-3.3-70b-versatile", "groq-key2"
+            )
+
+        # 4. Cerebras final fallback
         if not result["success"]:
             result = self._call_openai_compat(
                 prompt, self.cerebras_endpoint, self.cerebras_key,

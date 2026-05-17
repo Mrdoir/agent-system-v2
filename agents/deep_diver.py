@@ -22,6 +22,8 @@ class DeepDiver(BaseAgent):
     def __init__(self):
         super().__init__()
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+        self.openrouter_key_2 = os.getenv("OPENROUTER_API_KEY_2", "")
+        self.openrouter_key_3 = os.getenv("OPENROUTER_API_KEY_3", "")
         self.groq_key = os.getenv("GROQ_API_KEY", "")
         self.cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
         self.gemini_key = os.getenv("GEMINI_API_KEY", "")
@@ -71,33 +73,45 @@ DEEP DIVE: {topic}
 [Simplest possible product — be very specific about features]"""
 
     def _call_openrouter(self, prompt: str) -> dict:
-        if not self.openrouter_key:
-            return {"success": False, "error": "No OpenRouter key"}
-        headers = {
-            "Authorization": f"Bearer {self.openrouter_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://agent-system.local",
-            "X-Title": "Research Agent System"
-        }
-        payload = {
-            "model": self.primary_model,
-            "messages": [
-                {"role": "system", "content": "Deep strategic analyst. Think rigorously, go beyond surface level."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 2000,
-            "temperature": 0.5
-        }
-        try:
-            resp = requests.post(self.openrouter_endpoint, headers=headers, json=payload, timeout=45)
-            if resp.status_code == 429:
-                return {"success": False, "rate_limited": True}
-            if resp.status_code != 200:
-                return {"success": False, "error": f"HTTP {resp.status_code}"}
-            text = resp.json()["choices"][0]["message"]["content"]
-            return {"success": True, "text": text, "provider": "nemotron"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        """Try all 3 OpenRouter keys in sequence."""
+        keys = [k for k in [self.openrouter_key, self.openrouter_key_2, self.openrouter_key_3] if k]
+        if not keys:
+            return {"success": False, "error": "No OpenRouter keys"}
+        for i, key in enumerate(keys):
+            try:
+                log(self.NAME, f"Trying OpenRouter key {i+1}...")
+                resp = requests.post(
+                    self.openrouter_endpoint,
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://agent-system.local",
+                        "X-Title": "Research Agent System"
+                    },
+                    json={
+                        "model": self.primary_model,
+                        "messages": [
+                            {"role": "system", "content": "Deep strategic analyst. Think rigorously, go beyond surface level."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "max_tokens": 2000,
+                        "temperature": 0.5
+                    },
+                    timeout=45
+                )
+                if resp.status_code == 429:
+                    log(self.NAME, f"OpenRouter key {i+1} rate limited, trying next...")
+                    continue
+                if resp.status_code != 200:
+                    log(self.NAME, f"OpenRouter key {i+1} failed: HTTP {resp.status_code}")
+                    continue
+                text = resp.json()["choices"][0]["message"]["content"]
+                log(self.NAME, f"✓ OpenRouter key {i+1} responded")
+                return {"success": True, "text": text, "provider": f"nemotron-key{i+1}"}
+            except Exception as e:
+                log(self.NAME, f"OpenRouter key {i+1} error: {e}")
+                continue
+        return {"success": False, "rate_limited": True}
 
     def _call_openai_compat(self, prompt: str, endpoint: str, api_key: str, model: str, provider_name: str, system_msg: str = None) -> dict:
         """Generic caller for OpenAI-compatible endpoints (Groq, Cerebras, etc.)"""
