@@ -143,10 +143,13 @@ def api_stats():
     # Additional stats
     high_quality = safe_count("SELECT COUNT(*) FROM results WHERE score >= 7")
     today = datetime.now().date().isoformat()
-    today_count = safe_count(
-        "SELECT COUNT(*) FROM results WHERE created_at::date = %s::date",
-        (today,)
-    )
+    try:
+        today_count = safe_count(
+            "SELECT COUNT(*) FROM results WHERE created_at LIKE %s",
+            (today + "%",)
+        )
+    except Exception:
+        today_count = 0
     
     return jsonify({
         "total_results": total,
@@ -480,5 +483,5 @@ def health():
 # ═══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)

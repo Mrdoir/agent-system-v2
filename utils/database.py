@@ -80,11 +80,12 @@ def db_connection():
 
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, and migrate existing tables."""
     with db_connection() as conn:
         cur = conn.cursor()
+        
+        # ── Create tables ────────────────────────────────────────
         cur.execute("""
-            -- Research results
             CREATE TABLE IF NOT EXISTS results (
                 id SERIAL PRIMARY KEY,
                 agent TEXT NOT NULL,
@@ -95,7 +96,6 @@ def init_db():
                 created_at TEXT NOT NULL
             );
 
-            -- Memory insights (synthesized knowledge)
             CREATE TABLE IF NOT EXISTS insights (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
@@ -104,26 +104,20 @@ def init_db():
                 created_at TEXT NOT NULL
             );
 
-            -- Patterns to avoid (learned from critic)
             CREATE TABLE IF NOT EXISTS do_not_repeat (
                 id SERIAL PRIMARY KEY,
                 pattern TEXT UNIQUE NOT NULL,
                 created_at TEXT NOT NULL
             );
 
-            -- Agent status tracking
             CREATE TABLE IF NOT EXISTS agent_status (
                 agent TEXT PRIMARY KEY,
                 status TEXT DEFAULT 'active',
                 tasks_completed INTEGER DEFAULT 0,
-                tasks_failed INTEGER DEFAULT 0,
-                total_score INTEGER DEFAULT 0,
                 last_run TEXT,
-                rate_limit_until TEXT,
-                current_provider TEXT
+                rate_limit_until TEXT
             );
 
-            -- Critic feedback per agent (for learning)
             CREATE TABLE IF NOT EXISTS critic_feedback (
                 id SERIAL PRIMARY KEY,
                 agent TEXT NOT NULL,
@@ -135,7 +129,6 @@ def init_db():
                 created_at TEXT NOT NULL
             );
 
-            -- Topic tracking (for saturation detection)
             CREATE TABLE IF NOT EXISTS topic_stats (
                 topic TEXT PRIMARY KEY,
                 research_count INTEGER DEFAULT 0,
@@ -145,13 +138,25 @@ def init_db():
                 is_saturated BOOLEAN DEFAULT FALSE
             );
 
-            -- Create indexes for faster queries
             CREATE INDEX IF NOT EXISTS idx_results_agent ON results(agent);
             CREATE INDEX IF NOT EXISTS idx_results_topic ON results(topic);
             CREATE INDEX IF NOT EXISTS idx_results_score ON results(score DESC);
             CREATE INDEX IF NOT EXISTS idx_results_created ON results(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_insights_novelty ON insights(novelty_score DESC);
         """)
+        
+        # ── Migrate: add new columns to existing tables safely ───
+        migrations = [
+            ("agent_status", "tasks_failed", "INTEGER DEFAULT 0"),
+            ("agent_status", "total_score", "INTEGER DEFAULT 0"),
+            ("agent_status", "current_provider", "TEXT"),
+        ]
+        for table, column, col_type in migrations:
+            try:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            except Exception:
+                conn.rollback()  # Column already exists, ignore
+        
         cur.close()
 
 
@@ -312,35 +317,63 @@ def add_do_not_repeat(pattern: str):
 
 def update_agent_status(agent: str, status: str, tasks_completed: int = None, 
                         tasks_failed: int = None, score: int = None, provider: str = None):
-    """Update agent status with optional metrics."""
+    """Update agent status with optional metrics. Safe for old and new DB schemas."""
     with db_connection() as conn:
         cur = conn.cursor()
+        now = datetime.now().isoformat()
         
-        # Build dynamic update
-        updates = ["status = %s", "last_run = %s"]
-        params = [status, datetime.now().isoformat()]
+        try:
+            # Try the simple safe path first (works with old schema)
+            cur.execute("""
+                INSERT INTO agent_status (agent, status, last_run, tasks_completed)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (agent) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    last_run = EXCLUDED.last_run,
+                    tasks_completed = COALESCE(agent_status.tasks_completed, 0) + 1
+            """, (agent, status, now, tasks_completed or 0))
+        except Exception as e:
+            conn.rollback()
+            # Absolute fallback — just update status
+            try:
+                cur.execute("""
+                    INSERT INTO agent_status (agent, status, last_run)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (agent) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        last_run = EXCLUDED.last_run
+                """, (agent, status, now))
+            except Exception:
+                conn.rollback()
         
-        if tasks_completed is not None:
-            updates.append("tasks_completed = COALESCE(agent_status.tasks_completed, 0) + 1")
-        
-        if tasks_failed is not None:
-            updates.append("tasks_failed = COALESCE(agent_status.tasks_failed, 0) + 1")
-        
+        # Try updating new columns separately (won't crash if they don't exist)
         if score is not None:
-            updates.append("total_score = COALESCE(agent_status.total_score, 0) + %s")
-            params.append(score)
+            try:
+                cur.execute("""
+                    UPDATE agent_status 
+                    SET total_score = COALESCE(total_score, 0) + %s 
+                    WHERE agent = %s
+                """, (score, agent))
+            except Exception:
+                conn.rollback()
         
         if provider:
-            updates.append("current_provider = %s")
-            params.append(provider)
+            try:
+                cur.execute("""
+                    UPDATE agent_status SET current_provider = %s WHERE agent = %s
+                """, (provider, agent))
+            except Exception:
+                conn.rollback()
         
-        params.append(agent)
-        
-        cur.execute(f"""
-            INSERT INTO agent_status (agent, status, last_run, tasks_completed, tasks_failed, total_score, current_provider)
-            VALUES (%s, %s, %s, 0, 0, 0, NULL)
-            ON CONFLICT (agent) DO UPDATE SET {', '.join(updates)}
-        """, [agent, status, datetime.now().isoformat()] + params[:-1])
+        if tasks_failed is not None:
+            try:
+                cur.execute("""
+                    UPDATE agent_status 
+                    SET tasks_failed = COALESCE(tasks_failed, 0) + 1 
+                    WHERE agent = %s
+                """, (agent,))
+            except Exception:
+                conn.rollback()
         
         cur.close()
 

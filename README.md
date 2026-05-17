@@ -229,15 +229,23 @@ improved_repo/
 
 ## 🛠️ Deploy to Render (Free)
 
+### Option A: Single Web Service (recommended — runs both)
+
 1. Push to GitHub
-2. Create new **Background Worker** on Render
+2. Create new **Web Service** on Render
 3. Build Command: `pip install -r requirements.txt`
-4. Start Command: `python manager.py`
+4. Start Command: `python run.py`
 5. Add environment variables from `.env`
 
-For the dashboard:
-1. Create new **Web Service** on Render
-2. Start Command: `python dashboard.py`
+This runs both the dashboard (Flask on port) AND the agent manager in one process.
+
+### Option B: Two separate services
+
+**Web Service** (dashboard):
+- Start Command: `python dashboard.py`
+
+**Background Worker** (agents):
+- Start Command: `python manager.py`
 
 ---
 
