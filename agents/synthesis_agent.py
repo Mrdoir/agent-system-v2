@@ -1,34 +1,23 @@
 """
-SYNTHESIS AGENT v3 — Weekly reports with actionable recommendations
-Improvements:
-- Better opportunity scoring
-- Competition analysis
-- Build recommendations
-- Multi-platform notification
+SYNTHESIS AGENT v4 — Uses Global Provider Pool
+===============================================
+FIXED: No longer has its own _call_api(). Uses pool like every other agent.
 """
 
-import os
 from datetime import datetime, timedelta
+from agents.base_agent import BaseAgent
 from utils.logger import log_info, log_warn, log_debug
-from utils.database import get_results, get_insights, save_result
+from utils.database import get_results, get_insights, save_result, update_agent_status
 from utils.notifier import notify_weekly_synthesis
 from utils.memory_context import get_weekly_synthesis_context
 
 
-class SynthesisAgent:
+class SynthesisAgent(BaseAgent):
     NAME = "synthesis"
-    PROVIDER = "Groq (Llama 3.3 70B)"
+    SYSTEM_MSG = "Strategic research synthesizer. Be specific and actionable. Prioritize quality over quantity."
     
-    def __init__(self):
-        self.api_key = os.getenv("GROQ_API_KEY", "")
-        self.api_key_2 = os.getenv("GROQ_API_KEY_2", "")
-        self.together_key = os.getenv("TOGETHER_API_KEY", "")
-        
-        self.groq_endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        self.together_endpoint = "https://api.together.xyz/v1/chat/completions"
-        
-        self.groq_model = "llama-3.3-70b-versatile"
-        self.together_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    # Prefer Groq (fast, high quota), then fallbacks
+    PREFERRED_PROVIDERS = ["groq", "together", "cerebras", "gemini", "openrouter", "cohere"]
     
     def get_weekly_results(self) -> list:
         """Get all results from the past week."""
@@ -81,7 +70,7 @@ YOUR SYNTHESIS TASK
 
 Create a comprehensive weekly synthesis. Use this EXACT format:
 
-## 🏆 TOP 3 MARKET OPPORTUNITIES THIS WEEK
+## TOP 3 MARKET OPPORTUNITIES THIS WEEK
 
 ### Opportunity 1: [Name]
 - **Problem**: [Specific problem from research]
@@ -99,7 +88,7 @@ Create a comprehensive weekly synthesis. Use this EXACT format:
 ### Opportunity 3: [Name]
 [Same format]
 
-## 😤 TOP 3 MOST COMPLAINED ABOUT PROBLEMS
+## TOP 3 MOST COMPLAINED ABOUT PROBLEMS
 
 1. **[Problem]**
    - Source: [Where we found this]
@@ -113,7 +102,7 @@ Create a comprehensive weekly synthesis. Use this EXACT format:
 3. **[Problem]**
    [Same format]
 
-## 💡 TOP 3 APP/PRODUCT IDEAS
+## TOP 3 APP/PRODUCT IDEAS
 
 ### Idea 1: [Name]
 - One-line: [What it does in one sentence]
@@ -130,7 +119,7 @@ Create a comprehensive weekly synthesis. Use this EXACT format:
 ### Idea 3: [Name]
 [Same format]
 
-## 📈 STRONGEST TREND THIS WEEK
+## STRONGEST TREND THIS WEEK
 
 **Trend**: [Name the trend]
 - Evidence: [What data supports this]
@@ -139,7 +128,7 @@ Create a comprehensive weekly synthesis. Use this EXACT format:
 - Timeline: [When to act]
 - Opportunity Window: [How long until saturated]
 
-## ⚠️ WHAT TO AVOID
+## WHAT TO AVOID
 
 ### Saturated/Declining Areas:
 - [Area 1]: [Why to avoid]
@@ -149,7 +138,7 @@ Create a comprehensive weekly synthesis. Use this EXACT format:
 - [Mistake 1]
 - [Mistake 2]
 
-## 🎯 WEEKLY VERDICT
+## WEEKLY VERDICT
 
 **The Single Most Important Finding:**
 [2-3 sentences on the #1 actionable insight from this week]
@@ -168,98 +157,21 @@ QUALITY REQUIREMENTS:
 ═══════════════════════════════════════════════════════════════════
 """
     
-    def _call_api(self, prompt: str) -> dict:
-        """Call API with fallbacks."""
-        import requests
-        
-        system_msg = "Strategic research synthesizer. Be specific and actionable. Prioritize quality over quantity."
-        
-        # Try Groq
-        for api_key in [self.api_key, self.api_key_2]:
-            if not api_key:
-                continue
-            
-            try:
-                log_debug(self.NAME, "Trying Groq...")
-                resp = requests.post(
-                    self.groq_endpoint,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": self.groq_model,
-                        "messages": [
-                            {"role": "system", "content": system_msg},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": 3000,
-                        "temperature": 0.4
-                    },
-                    timeout=90
-                )
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if "choices" in data:
-                        return {"success": True, "text": data["choices"][0]["message"]["content"]}
-                
-            except Exception as e:
-                log_debug(self.NAME, f"Groq error: {e}")
-        
-        # Try Together
-        if self.together_key:
-            try:
-                log_debug(self.NAME, "Trying Together...")
-                resp = requests.post(
-                    self.together_endpoint,
-                    headers={
-                        "Authorization": f"Bearer {self.together_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": self.together_model,
-                        "messages": [
-                            {"role": "system", "content": system_msg},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": 3000,
-                        "temperature": 0.4
-                    },
-                    timeout=90
-                )
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if "choices" in data:
-                        return {"success": True, "text": data["choices"][0]["message"]["content"]}
-                        
-            except Exception as e:
-                log_debug(self.NAME, f"Together error: {e}")
-        
-        return {"success": False, "error": "All providers failed"}
-    
-    def synthesize(self) -> dict:
-        """
-        Generate weekly synthesis report.
-        
-        Returns: {"success": bool, "synthesis": str, "stats": dict}
-        """
-        log_info(self.NAME, "Starting weekly synthesis...")
-        
-        # Get data
+    def generate_weekly(self) -> dict:
+        """Generate weekly synthesis report using the global provider pool."""
         results = self.get_weekly_results()
         insights = self.get_top_insights()
         
-        if len(results) < 5:
-            log_warn(self.NAME, f"Not enough data ({len(results)} results). Skipping.")
-            return {"success": False, "reason": "Not enough data"}
+        if not results:
+            log_warn(self.NAME, "No results from past week to synthesize")
+            return {"success": False, "error": "No results to synthesize"}
         
-        log_info(self.NAME, f"Synthesizing {len(results)} results + {len(insights)} insights")
+        log_info(self.NAME, f"Synthesizing {len(results)} results from past week")
         
-        # Build prompt and call API
         prompt = self.build_synthesis_prompt(results, insights)
-        result = self._call_api(prompt)
+        
+        # USE THE POOL (not direct API call)
+        result = self.call_api(prompt, max_tokens=3000, temperature=0.4)
         
         if not result.get("success"):
             log_warn(self.NAME, f"Synthesis failed: {result.get('error')}")
@@ -267,33 +179,29 @@ QUALITY REQUIREMENTS:
         
         synthesis_text = result["text"]
         
-        # Save to database
+        # Save synthesis as a special result
+        self.save_to_db(
+            topic="weekly_synthesis",
+            content=synthesis_text,
+            score=8,
+            tags=["synthesis", "weekly"]
+        )
+        
+        # Update status
+        update_agent_status(self.NAME, "active", tasks_completed=1, score=8)
+        
+        # Send notification
         try:
-            save_result(
-                "synthesis",
-                f"Weekly Report {datetime.now().strftime('%Y-%m-%d')}",
-                synthesis_text,
-                score=10  # Weekly synthesis is always high value
-            )
+            notify_weekly_synthesis(synthesis_text[:2000])
         except Exception as e:
-            log_warn(self.NAME, f"Save error: {e}")
+            log_debug(self.NAME, f"Notification error: {e}")
         
-        # Send notifications
-        notify_weekly_synthesis(synthesis_text, len(results))
-        
-        log_info(self.NAME, "Weekly synthesis complete!")
-        
-        # Calculate stats
-        stats = {
-            "total_results": len(results),
-            "avg_score": sum(r.get("score", 0) for r in results) / max(len(results), 1),
-            "high_quality": len([r for r in results if r.get("score", 0) >= 7]),
-            "unique_topics": len(set(r.get("topic", "") for r in results)),
-            "insights_count": len(insights)
-        }
+        log_info(self.NAME, "Weekly synthesis complete")
         
         return {
             "success": True,
             "synthesis": synthesis_text,
-            "stats": stats
+            "results_count": len(results),
+            "insights_count": len(insights),
+            "provider": result.get("provider", "unknown")
         }

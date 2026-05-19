@@ -1,6 +1,7 @@
 """
 CRITIC v4 — Uses Global Provider Pool
-Prefers reasoning models (OpenRouter DeepSeek/Qwen) for quality evaluation.
+======================================
+FIXED: OpenRouter moved to END of preference list (only 200/day quota).
 """
 
 import re
@@ -16,8 +17,8 @@ class CriticAgent(BaseAgent):
     NAME = "critic"
     SYSTEM_MSG = "Elite research critic. Think deeply. Be specific and ruthless about quality."
     
-    # Prefer reasoning models
-    PREFERRED_PROVIDERS = ["openrouter", "groq", "cerebras", "gemini", "together", "cohere"]
+    # FIXED: OpenRouter LAST (only 200/day), high-quota providers first
+    PREFERRED_PROVIDERS = ["groq", "cerebras", "gemini", "together", "cohere", "openrouter"]
     
     def build_eval_prompt(self, topic: str, research_content: str) -> str:
         do_not_repeat = get_do_not_repeat()
@@ -123,9 +124,11 @@ Be ruthless. Generic = worthless. Specific = valuable.
     
     def evaluate(self, topic: str, content: str) -> dict:
         prompt = self.build_eval_prompt(topic, content)
+        
+        # Uses the pool via BaseAgent.call_api()
         result = self.call_api(prompt, max_tokens=2500, temperature=0.2)
         
-        if not result["success"]:
+        if not result.get("success"):
             return result
         
         text = result["text"]

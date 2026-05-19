@@ -1,30 +1,24 @@
 """
-MEMORY AGENT v3 — Knowledge synthesis with better novelty detection
-Improvements:
-- Better novelty scoring algorithm
-- Pattern extraction from insights
-- Knowledge graph awareness
-- Duplicate detection
+MEMORY AGENT v4 — Uses Global Provider Pool
+============================================
+FIXED: No longer bypasses the pool. Uses pool.call_llm() like every other agent.
 """
 
-import os
 import re
-from agents.base_agent import BaseAgent, GeminiMixin
-from utils.logger import log_info, log_debug, log_api_call
+from agents.base_agent import BaseAgent
+from utils.logger import log_info, log_debug
 from utils.database import (
     get_insights, get_do_not_repeat, save_insight, add_do_not_repeat,
     update_agent_status
 )
 
 
-class MemoryAgent(BaseAgent, GeminiMixin):
+class MemoryAgent(BaseAgent):
     NAME = "memory"
-    PROVIDER = "Google Gemini Flash"
+    SYSTEM_MSG = "You are a knowledge synthesizer. Extract only genuinely novel insights. Be ruthless about avoiding redundancy."
     
-    def __init__(self):
-        super().__init__()
-        self.api_key = os.getenv("GEMINI_API_KEY", "")
-        self.model = "gemini-2.0-flash"
+    # Prefer Gemini (good at synthesis), then spread across others
+    PREFERRED_PROVIDERS = ["gemini", "groq", "cerebras", "together", "openrouter", "cohere"]
     
     def build_synthesis_prompt(self, new_content: str, existing_insights: list, 
                                 do_not_repeat: list, topic: str) -> str:
@@ -172,12 +166,10 @@ Generic insights = 0 value. Specific novel insights = valuable.
     def synthesize(self, new_content: str, topic: str) -> dict:
         """
         Compare new research with memory and extract novel insights.
+        NOW USES THE GLOBAL PROVIDER POOL.
         
         Returns: {"success": bool, "novelty_score": int, "synthesis": str}
         """
-        if self.is_rate_limited():
-            return {"success": False, "rate_limited": True}
-        
         # Get existing knowledge
         existing_insights = get_insights(limit=10)
         do_not_repeat = get_do_not_repeat()
@@ -185,12 +177,8 @@ Generic insights = 0 value. Specific novel insights = valuable.
         # Build prompt
         prompt = self.build_synthesis_prompt(new_content, existing_insights, do_not_repeat, topic)
         
-        # Call API
-        result = self._call_gemini(prompt, self.api_key, self.model, max_tokens=1200, temperature=0.3)
-        
-        if result.get("rate_limited"):
-            self.set_rate_limited()
-            return {"success": False, "rate_limited": True}
+        # USE THE POOL (not direct API call)
+        result = self.call_api(prompt, max_tokens=1200, temperature=0.3)
         
         if not result.get("success"):
             return {"success": False, "error": result.get("error")}
@@ -223,36 +211,19 @@ Generic insights = 0 value. Specific novel insights = valuable.
             "novelty_score": novelty_score,
             "synthesis": synthesis_text,
             "new_patterns": new_patterns,
-            "provider": "gemini"
+            "provider": result.get("provider", "unknown")
         }
     
     def get_memory_summary(self, limit: int = 5) -> str:
-        """Get a summary of stored knowledge for other agents."""
-        insights = get_insights(limit=limit, min_novelty=5)
-        
+        """Get a summary of recent insights for context."""
+        insights = get_insights(limit=limit)
         if not insights:
-            return "No stored knowledge yet."
+            return "No insights stored yet."
         
         summary_parts = []
         for i in insights:
-            # Extract key bullet points
-            content = i.get("content", "")
-            bullets = [l.strip() for l in content.split("\n") 
-                      if l.strip().startswith(("•", "-", "*"))]
-            
-            if bullets:
-                summary_parts.append(f"[Novelty {i.get('novelty_score', 0)}/10]\n" + "\n".join(bullets[:3]))
+            score = i.get("novelty_score", 0)
+            content = i.get("content", "")[:200]
+            summary_parts.append(f"[Novelty {score}/10] {content}...")
         
-        return "\n\n".join(summary_parts) if summary_parts else "No high-novelty insights yet."
-    
-    def research(self, topic: str) -> dict:
-        """Memory agent doesn't do research, use synthesize() instead."""
-        return {"success": False, "error": "Use synthesize() instead"}
-    
-    def build_prompt(self, topic: str, agent_name: str = None) -> str:
-        """Not used directly."""
-        return ""
-    
-    def call_api(self, prompt: str) -> dict:
-        """Not used directly."""
-        return {"success": False, "error": "Use synthesize() instead"}
+        return "\n\n".join(summary_parts)

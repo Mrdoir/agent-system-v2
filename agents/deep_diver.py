@@ -1,6 +1,7 @@
 """
 DEEP DIVER v4 — Uses Global Provider Pool
-Prefers OpenRouter (reasoning models) then falls back to others.
+==========================================
+FIXED: OpenRouter moved to END of preference list (only 200/day quota).
 """
 
 from agents.base_agent import BaseAgent
@@ -13,8 +14,8 @@ class DeepDiver(BaseAgent):
     NAME = "deep_diver"
     SYSTEM_MSG = "Deep strategic analyst. Think step by step. Be rigorous and specific."
     
-    # Prefer reasoning models first (OpenRouter has DeepSeek R1)
-    PREFERRED_PROVIDERS = ["openrouter", "cerebras", "together", "groq", "gemini", "cohere"]
+    # FIXED: OpenRouter LAST (only 200/day), high-quota providers first
+    PREFERRED_PROVIDERS = ["cerebras", "groq", "gemini", "together", "cohere", "openrouter"]
     
     def build_prompt(self, topic: str) -> str:
         memory_context = get_context_for_prompt(topic, agent_name=self.NAME)
@@ -76,6 +77,6 @@ QUALITY: Think from first principles. Challenge obvious assumptions.
     def research(self, topic: str) -> dict:
         prompt = self.build_prompt(topic)
         result = self.call_api(prompt, max_tokens=2000, temperature=0.5)
-        if result["success"]:
+        if result.get("success"):
             self.save_to_db(topic, result["text"])
         return result

@@ -1,22 +1,11 @@
 """
-PROVIDER POOL v1 — Global API key management across all agents
-===============================================================
-THE CORE FIX for rate limiting. Instead of each agent owning its own
-keys and burning through them independently, this pool:
-
-1. Tracks every key's usage across ALL agents
-2. Routes requests to least-used provider
-3. Respects per-key rate limits with precise cooldowns
-4. Spreads load via round-robin with usage awareness
-5. Thread-safe for concurrent agent execution
-
-Your keys (from .env):
-- 3 OpenRouter keys
-- 2 Groq keys  
-- 1 Cerebras key
-- 1 Together key (if set)
-- 1 Gemini key
-- 1 Cohere key
+PROVIDER POOL v2 — Global API key management with all your keys
+================================================================
+FIXED:
+1. Loads GEMINI_BOT_KEY as gemini-2
+2. Loads TELEGRAM_OPENROUTER_KEY as openrouter-3
+3. Better adaptive cooldowns
+4. Quota awareness methods for manager
 """
 
 import os
@@ -24,7 +13,6 @@ import time
 import threading
 import requests
 from datetime import datetime, timedelta
-from collections import defaultdict
 from utils.logger import log_info, log_warn, log_debug, log_error
 
 
@@ -117,12 +105,13 @@ class ProviderKey:
         self.last_success = time.time()
     
     def record_failure(self, is_rate_limit: bool = False):
-        """Record failed response."""
+        """Record failed response with adaptive cooldown."""
         self.consecutive_failures += 1
         if is_rate_limit:
-            cooldown = self.cooldown_minutes * 60
-            if self.consecutive_failures > 2:
-                cooldown *= min(self.consecutive_failures - 1, 4)
+            # Adaptive cooldown: back off harder with consecutive failures
+            base_cooldown = self.cooldown_minutes * 60
+            multiplier = min(self.consecutive_failures, 5)
+            cooldown = base_cooldown * multiplier
             self.rate_limited_until = time.time() + cooldown
             log_debug("provider_pool", 
                 f"{self.key_id} rate limited for {cooldown}s "
@@ -168,11 +157,21 @@ class ProviderPool:
             if self._initialized:
                 return
             
-            # ── GEMINI ─────────────────────────────────────────────
+            # ── GEMINI (primary key) ───────────────────────────────
             gemini_key = os.getenv("GEMINI_API_KEY", "")
             if gemini_key:
                 self._keys.append(ProviderKey(
                     provider="gemini", key=gemini_key, key_id="gemini-1",
+                    endpoint="https://generativelanguage.googleapis.com",
+                    model="gemini-2.0-flash",
+                    **PROVIDER_LIMITS["gemini"]
+                ))
+            
+            # ── GEMINI (bot key — YOUR EXTRA KEY) ──────────────────
+            gemini_bot_key = os.getenv("GEMINI_BOT_KEY", "")
+            if gemini_bot_key and gemini_bot_key != gemini_key:
+                self._keys.append(ProviderKey(
+                    provider="gemini", key=gemini_bot_key, key_id="gemini-2",
                     endpoint="https://generativelanguage.googleapis.com",
                     model="gemini-2.0-flash",
                     **PROVIDER_LIMITS["gemini"]
@@ -189,8 +188,9 @@ class ProviderPool:
                         **PROVIDER_LIMITS["groq"]
                     ))
             
-            # ── OPENROUTER (3 keys) ────────────────────────────────
-            for i, env_var in enumerate(["OPENROUTER_API_KEY", "OPENROUTER_API_KEY_2", "OPENROUTER_API_KEY_3"], 1):
+            # ── OPENROUTER (your 2 keys + telegram key) ────────────
+            openrouter_keys_added = []
+            for i, env_var in enumerate(["OPENROUTER_API_KEY", "OPENROUTER_API_KEY_2"], 1):
                 key = os.getenv(env_var, "")
                 if key:
                     self._keys.append(ProviderKey(
@@ -199,6 +199,17 @@ class ProviderPool:
                         model="deepseek/deepseek-r1:free",
                         **PROVIDER_LIMITS["openrouter"]
                     ))
+                    openrouter_keys_added.append(key)
+            
+            # ── OPENROUTER (telegram key — YOUR EXTRA KEY) ─────────
+            tg_or_key = os.getenv("TELEGRAM_OPENROUTER_KEY", "")
+            if tg_or_key and tg_or_key not in openrouter_keys_added:
+                self._keys.append(ProviderKey(
+                    provider="openrouter", key=tg_or_key, key_id="openrouter-3",
+                    endpoint="https://openrouter.ai/api/v1/chat/completions",
+                    model="deepseek/deepseek-r1:free",
+                    **PROVIDER_LIMITS["openrouter"]
+                ))
             
             # ── CEREBRAS ───────────────────────────────────────────
             cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
@@ -226,286 +237,228 @@ class ProviderPool:
                 self._keys.append(ProviderKey(
                     provider="cohere", key=cohere_key, key_id="cohere-1",
                     endpoint="https://api.cohere.ai/v1/chat",
-                    model="command-r",
+                    model="command-r-plus",
                     **PROVIDER_LIMITS["cohere"]
                 ))
             
             self._initialized = True
-            log_info("provider_pool", 
-                f"Initialized with {len(self._keys)} keys: "
-                f"{', '.join(k.key_id for k in self._keys)}")
-    
-    def get_best_key(self, preferred_providers=None, exclude_ids=None):
-        """
-        Get the best available key, considering:
-        1. Availability (not rate limited)
-        2. Provider preference (agent-specific)
-        3. Usage score (least-used first)
-        """
-        with self._lock:
-            candidates = []
-            
-            for key in self._keys:
-                if not key.is_available():
-                    continue
-                if exclude_ids and key.key_id in exclude_ids:
-                    continue
-                candidates.append(key)
-            
-            if not candidates:
-                return None
-            
-            def sort_key(k):
-                pref_bonus = 0
-                if preferred_providers and k.provider in preferred_providers:
-                    try:
-                        pref_bonus = -10 + preferred_providers.index(k.provider)
-                    except ValueError:
-                        pref_bonus = 0
-                return (pref_bonus, k.usage_score)
-            
-            candidates.sort(key=sort_key)
-            return candidates[0]
+            log_info("provider_pool", f"Initialized with {len(self._keys)} API keys")
     
     def get_available_count(self) -> int:
-        """How many keys are currently available."""
-        with self._lock:
-            return sum(1 for k in self._keys if k.is_available())
+        """Get count of currently available providers."""
+        self.initialize()
+        return len([k for k in self._keys if k.is_available()])
     
     def get_total_count(self) -> int:
-        """Total registered keys."""
+        """Get total count of registered providers."""
+        self.initialize()
         return len(self._keys)
     
-    def get_next_available_time(self) -> int:
-        """Seconds until the next key becomes available. 0 if one is ready."""
+    def get_best_key(self, preferred_providers: list = None):
+        """Get the best available key for a request."""
+        self.initialize()
+        
         with self._lock:
-            if any(k.is_available() for k in self._keys):
-                return 0
-            times = [k.time_until_available() for k in self._keys]
-            return min(times) if times else 0
+            available = [k for k in self._keys if k.is_available()]
+            
+            if not available:
+                return None
+            
+            # Filter by preferred providers if specified
+            if preferred_providers:
+                preferred = [k for k in available if k.provider in preferred_providers]
+                if preferred:
+                    available = preferred
+            
+            # Sort by usage score (lower is better)
+            available.sort(key=lambda k: k.usage_score)
+            
+            return available[0]
     
-    def get_status(self) -> dict:
-        """Full pool status for dashboard/logging."""
-        with self._lock:
-            status = {
-                "total_keys": len(self._keys),
-                "available_keys": sum(1 for k in self._keys if k.is_available()),
-                "keys": []
-            }
-            for k in self._keys:
-                status["keys"].append({
-                    "key_id": k.key_id,
-                    "provider": k.provider,
-                    "available": k.is_available(),
-                    "calls_this_minute": k.calls_this_minute,
-                    "calls_today": k.calls_today,
-                    "rpm_limit": k.rpm,
-                    "rpd_limit": k.rpd,
-                    "consecutive_failures": k.consecutive_failures,
-                    "total_calls": k.total_calls,
-                    "total_successes": k.total_successes,
-                    "seconds_until_available": k.time_until_available(),
-                    "usage_score": round(k.usage_score, 3),
-                })
-            return status
-    
-    def call_llm(self, prompt: str, system_msg: str = "",
-                 preferred_providers=None,
-                 exclude_providers=None,
-                 model_override=None,
-                 max_tokens: int = 1500,
-                 temperature: float = 0.7,
-                 timeout: int = 60,
-                 caller: str = "unknown") -> dict:
+    def call_llm(self, prompt: str, system_msg: str = "", 
+                 preferred_providers: list = None,
+                 max_tokens: int = 1500, temperature: float = 0.7,
+                 timeout: int = 60, caller: str = "unknown") -> dict:
         """
-        Make an LLM API call using the best available key.
-        Handles routing, retries, rate limit tracking automatically.
+        Call an LLM with automatic provider selection and fallback.
         """
         self.initialize()
         
-        tried = set()
+        tried_keys = set()
+        last_error = None
         
-        for attempt in range(min(3, len(self._keys))):
-            key = self.get_best_key(
-                preferred_providers=preferred_providers,
-                exclude_ids=tried
-            )
+        for attempt in range(len(self._keys)):
+            key = self.get_best_key(preferred_providers)
             
-            if key is None:
+            if not key or key.key_id in tried_keys:
+                # Try without preference filter
+                all_available = [k for k in self._keys 
+                               if k.is_available() and k.key_id not in tried_keys]
+                if all_available:
+                    all_available.sort(key=lambda k: k.usage_score)
+                    key = all_available[0]
+                else:
+                    break
+            
+            if not key:
                 break
             
-            tried.add(key.key_id)
-            
-            log_debug("provider_pool", 
-                f"[{caller}] attempt {attempt+1}: {key.key_id} "
-                f"(usage: {key.usage_score:.2f})")
-            
+            tried_keys.add(key.key_id)
             key.record_call()
             
-            if key.provider == "gemini":
-                result = self._call_gemini(key, prompt, max_tokens, temperature, timeout)
-            elif key.provider == "cohere":
-                result = self._call_cohere(key, prompt, max_tokens, temperature, timeout)
-            else:
-                model = model_override or key.model
-                result = self._call_openai_compat(
-                    key, prompt, system_msg, model, 
-                    max_tokens, temperature, timeout
-                )
-            
-            if result["success"]:
-                key.record_success()
-                log_debug("provider_pool", f"[{caller}] {key.key_id} success")
-                return {
-                    "success": True,
-                    "text": result["text"],
-                    "provider": key.provider,
-                    "key_id": key.key_id,
-                    "error": None,
-                    "all_exhausted": False
-                }
-            
-            is_rate_limit = result.get("status_code") == 429
-            key.record_failure(is_rate_limit=is_rate_limit)
-            
-            if is_rate_limit:
-                log_debug("provider_pool", f"[{caller}] {key.key_id} rate limited, trying next")
-            else:
-                log_debug("provider_pool", f"[{caller}] {key.key_id} failed: {result.get('error')}")
+            try:
+                result = self._make_request(key, prompt, system_msg, 
+                                           max_tokens, temperature, timeout)
+                
+                if result.get("success"):
+                    key.record_success()
+                    result["key_id"] = key.key_id
+                    result["provider"] = key.provider
+                    log_debug("provider_pool", f"{caller} -> {key.key_id} succeeded")
+                    return result
+                
+                # Check if rate limited
+                error = result.get("error", "").lower()
+                is_rate_limit = any(x in error for x in 
+                    ["rate", "limit", "quota", "429", "too many"])
+                key.record_failure(is_rate_limit=is_rate_limit)
+                last_error = result.get("error")
+                
+            except Exception as e:
+                key.record_failure(is_rate_limit=False)
+                last_error = str(e)
+                log_debug("provider_pool", f"{key.key_id} exception: {e}")
         
-        next_available = self.get_next_available_time()
-        log_warn("provider_pool", 
-            f"[{caller}] all keys exhausted. Next available in {next_available}s")
-        
+        # All providers exhausted
         return {
             "success": False,
-            "text": None,
-            "provider": None,
-            "key_id": None,
-            "error": "All provider keys exhausted",
             "all_exhausted": True,
-            "retry_after_seconds": next_available
+            "error": last_error or "All providers exhausted",
+            "tried": list(tried_keys)
         }
     
-    # ═══════════════════════════════════════════════════════════════
-    # API FORMAT HANDLERS
-    # ═══════════════════════════════════════════════════════════════
-    
-    def _call_openai_compat(self, key, prompt, system_msg, model, max_tokens, temperature, timeout):
-        """Call OpenAI-compatible API (Groq, OpenRouter, Cerebras, Together)."""
+    def _make_request(self, key, prompt: str, system_msg: str,
+                      max_tokens: int, temperature: float, timeout: int) -> dict:
+        """Make the actual API request based on provider type."""
+        
         try:
-            headers = {
+            if key.provider == "gemini":
+                return self._call_gemini(key, prompt, system_msg, 
+                                        max_tokens, temperature, timeout)
+            elif key.provider == "cohere":
+                return self._call_cohere(key, prompt, system_msg,
+                                        max_tokens, temperature, timeout)
+            else:
+                # OpenAI-compatible: Groq, OpenRouter, Cerebras, Together
+                return self._call_openai_compatible(key, prompt, system_msg,
+                                                   max_tokens, temperature, timeout)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _call_openai_compatible(self, key, prompt: str, system_msg: str,
+                                 max_tokens: int, temperature: float, timeout: int) -> dict:
+        """Call OpenAI-compatible APIs (Groq, OpenRouter, Cerebras, Together)."""
+        headers = {
+            "Authorization": f"Bearer {key.key}",
+            "Content-Type": "application/json"
+        }
+        
+        # OpenRouter needs extra headers
+        if key.provider == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/Mrdoir/agent-system-v2"
+            headers["X-Title"] = "Agent Research Hub"
+        
+        messages = []
+        if system_msg:
+            messages.append({"role": "system", "content": system_msg})
+        messages.append({"role": "user", "content": prompt})
+        
+        resp = requests.post(
+            key.endpoint,
+            headers=headers,
+            json={
+                "model": key.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            },
+            timeout=timeout
+        )
+        
+        if resp.status_code == 429:
+            return {"success": False, "error": "rate_limit_429"}
+        
+        if resp.status_code != 200:
+            return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+        
+        data = resp.json()
+        if "choices" in data and len(data["choices"]) > 0:
+            return {"success": True, "text": data["choices"][0]["message"]["content"]}
+        
+        return {"success": False, "error": "No choices in response"}
+    
+    def _call_gemini(self, key, prompt: str, system_msg: str,
+                     max_tokens: int, temperature: float, timeout: int) -> dict:
+        """Call Google Gemini API."""
+        full_prompt = f"{system_msg}\n\n{prompt}" if system_msg else prompt
+        
+        resp = requests.post(
+            f"{key.endpoint}/v1beta/models/{key.model}:generateContent?key={key.key}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": full_prompt}]}],
+                "generationConfig": {
+                    "maxOutputTokens": max_tokens,
+                    "temperature": temperature
+                }
+            },
+            timeout=timeout
+        )
+        
+        if resp.status_code == 429:
+            return {"success": False, "error": "rate_limit_429"}
+        
+        if resp.status_code != 200:
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+        
+        data = resp.json()
+        try:
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return {"success": True, "text": text}
+        except (KeyError, IndexError):
+            return {"success": False, "error": "Invalid response structure"}
+    
+    def _call_cohere(self, key, prompt: str, system_msg: str,
+                     max_tokens: int, temperature: float, timeout: int) -> dict:
+        """Call Cohere API."""
+        resp = requests.post(
+            key.endpoint,
+            headers={
                 "Authorization": f"Bearer {key.key}",
                 "Content-Type": "application/json"
-            }
-            if key.provider == "openrouter":
-                headers["HTTP-Referer"] = "https://agent-research-hub.local"
-                headers["X-Title"] = "Research Agent"
-            
-            messages = []
-            if system_msg:
-                messages.append({"role": "system", "content": system_msg})
-            messages.append({"role": "user", "content": prompt})
-            
-            resp = requests.post(
-                key.endpoint,
-                headers=headers,
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature
-                },
-                timeout=timeout
-            )
-            
-            if resp.status_code == 429:
-                return {"success": False, "status_code": 429, "error": "Rate limited"}
-            if resp.status_code != 200:
-                return {"success": False, "status_code": resp.status_code, "error": f"HTTP {resp.status_code}"}
-            
-            data = resp.json()
-            if "choices" in data:
-                text = data["choices"][0]["message"]["content"]
-                if text:
-                    return {"success": True, "text": text}
-            
-            return {"success": False, "status_code": 200, "error": "Empty response"}
-        except requests.Timeout:
-            return {"success": False, "status_code": 0, "error": "Timeout"}
-        except Exception as e:
-            return {"success": False, "status_code": 0, "error": str(e)}
-    
-    def _call_gemini(self, key, prompt, max_tokens, temperature, timeout):
-        """Call Google Gemini API."""
-        try:
-            resp = requests.post(
-                f"{key.endpoint}/v1beta/models/{key.model}:generateContent?key={key.key}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "maxOutputTokens": max_tokens,
-                        "temperature": temperature
-                    }
-                },
-                timeout=timeout
-            )
-            
-            if resp.status_code == 429:
-                return {"success": False, "status_code": 429, "error": "Rate limited"}
-            if resp.status_code != 200:
-                return {"success": False, "status_code": resp.status_code, "error": f"HTTP {resp.status_code}"}
-            
-            data = resp.json()
-            if "candidates" in data:
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                if text:
-                    return {"success": True, "text": text}
-            
-            return {"success": False, "status_code": 200, "error": "Empty response"}
-        except requests.Timeout:
-            return {"success": False, "status_code": 0, "error": "Timeout"}
-        except Exception as e:
-            return {"success": False, "status_code": 0, "error": str(e)}
-    
-    def _call_cohere(self, key, prompt, max_tokens, temperature, timeout):
-        """Call Cohere API."""
-        try:
-            resp = requests.post(
-                key.endpoint,
-                headers={
-                    "Authorization": f"Bearer {key.key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": key.model,
-                    "message": prompt,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature
-                },
-                timeout=timeout
-            )
-            
-            if resp.status_code == 429:
-                return {"success": False, "status_code": 429, "error": "Rate limited"}
-            if resp.status_code != 200:
-                return {"success": False, "status_code": resp.status_code, "error": f"HTTP {resp.status_code}"}
-            
-            data = resp.json()
-            text = data.get("text", "")
-            if text:
-                return {"success": True, "text": text}
-            
-            return {"success": False, "status_code": 200, "error": "Empty response"}
-        except requests.Timeout:
-            return {"success": False, "status_code": 0, "error": "Timeout"}
-        except Exception as e:
-            return {"success": False, "status_code": 0, "error": str(e)}
+            },
+            json={
+                "model": key.model,
+                "message": prompt,
+                "preamble": system_msg if system_msg else None,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            },
+            timeout=timeout
+        )
+        
+        if resp.status_code == 429:
+            return {"success": False, "error": "rate_limit_429"}
+        
+        if resp.status_code != 200:
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+        
+        data = resp.json()
+        if "text" in data:
+            return {"success": True, "text": data["text"]}
+        
+        return {"success": False, "error": "No text in response"}
 
 
-# ═══════════════════════════════════════════════════════════════════
-# GLOBAL SINGLETON — import this everywhere
-# ═══════════════════════════════════════════════════════════════════
-
+# Global singleton
 pool = ProviderPool()

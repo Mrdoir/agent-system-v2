@@ -1,11 +1,7 @@
 """
-MANAGER AGENT v4 — Orchestrates all research agents
-Improvements:
-- Smarter topic selection (avoid saturated)
-- Parallel agent execution option
-- Better error recovery
-- Analytics tracking
-- Daily/weekly summaries
+MANAGER AGENT v4 — Orchestrates all research agents with adaptive timing
+=========================================================================
+FIXED: Checks provider availability before cycles, adapts interval when low.
 """
 
 from dotenv import load_dotenv
@@ -14,8 +10,6 @@ load_dotenv()
 import os
 import json
 import time
-import schedule
-import threading
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
@@ -36,13 +30,14 @@ from utils.notifier import (
     notify_high_score, notify_daily_summary, notify_rate_limit_all
 )
 from utils.topic_rotator import rotate_topics, get_next_topic, get_prioritized_topics
+from utils.provider_pool import pool
 
 # Ensure state directory exists
 Path("state").mkdir(exist_ok=True)
 
 # Configuration
 MAX_RESULTS_PER_TOPIC = int(os.getenv("MAX_RESULTS_PER_TOPIC", "5"))
-CYCLE_INTERVAL_MINUTES = int(os.getenv("CYCLE_INTERVAL_MINUTES", "15"))
+DEFAULT_CYCLE_MINUTES = int(os.getenv("CYCLE_INTERVAL_MINUTES", "15"))
 
 # 100-topic research pool
 TOPIC_POOL = [
@@ -227,246 +222,169 @@ def seed_topics():
         for topic in TOPIC_POOL:
             cur.execute("""
                 INSERT INTO research_topics (topic, added_at, priority)
-                VALUES (%s, %s, %s)
+                VALUES (%s, %s, 0)
                 ON CONFLICT (topic) DO NOTHING
-            """, (topic, datetime.now().isoformat(), 1))
+            """, (topic, datetime.now().isoformat()))
         conn.commit()
         cur.close()
         conn.close()
         log_manager(f"Seeded {len(TOPIC_POOL)} topics")
     except Exception as e:
-        log_debug("manager", f"seed_topics error: {e}")
+        log_error("manager", f"seed_topics error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ADAPTIVE TIMING — Check provider health before each cycle
+# ═══════════════════════════════════════════════════════════════════
+
+def get_adaptive_interval() -> int:
+    """Get cycle interval based on provider health."""
+    available = pool.get_available_count()
+    total = pool.get_total_count()
+    
+    if available == 0:
+        log_warn("manager", "All providers exhausted!")
+        return 120  # 2 hours
+    elif available == 1:
+        log_warn("manager", f"Only 1/{total} provider available, slowing down")
+        return 60  # 1 hour
+    elif available <= 2:
+        log_info("manager", f"Only {available}/{total} providers available")
+        return 30  # 30 minutes
+    else:
+        return DEFAULT_CYCLE_MINUTES
+
+
+def should_run_cycle() -> bool:
+    """Check if enough providers are available to run a cycle."""
+    available = pool.get_available_count()
+    total = pool.get_total_count()
+    
+    if available == 0:
+        log_warn("manager", "All providers exhausted, skipping cycle")
+        notify_rate_limit_all(get_adaptive_interval())
+        return False
+    
+    log_info("manager", f"Providers: {available}/{total} available")
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════
 # RESEARCH CYCLE
 # ═══════════════════════════════════════════════════════════════════
 
-def get_available_agents() -> list:
-    """Get agents that aren't rate limited."""
-    agents = [
-        ("market_scout", MarketScout()),
-        ("trend_analyst", TrendAnalyst()),
-        ("deep_diver", DeepDiver()),
-    ]
+def run_cycle():
+    """Run one research cycle."""
+    log_manager("═══════════════════════════════════════════════════════════")
+    log_manager("STARTING RESEARCH CYCLE")
+    log_manager("═══════════════════════════════════════════════════════════")
     
-    available = []
-    for name, agent in agents:
-        if not agent.is_rate_limited():
-            available.append((name, agent))
+    # Get topic
+    topic = get_next_topic()
+    if not topic:
+        log_warn("manager", "No topics available, using fallback")
+        topic = TOPIC_POOL[0]
+    
+    log_manager(f"Topic: {topic}")
+    
+    # ── MARKET SCOUT ──────────────────────────────────────────────
+    scout_result = None
+    try:
+        scout = MarketScout()
+        scout_result = scout.research(topic)
+        if scout_result.get("success"):
+            log_info("market_scout", f"Research complete via {scout_result.get('provider', '?')}")
         else:
-            mins = agent.minutes_until_reset()
-            log_debug("manager", f"{name} rate limited for {mins}m")
+            log_warn("market_scout", f"Failed: {scout_result.get('error', 'unknown')}")
+    except Exception as e:
+        log_error("market_scout", f"Exception: {e}")
     
-    return available
-
-
-def select_topic(completed_this_cycle: list = None) -> str:
-    """Select the best topic to research next."""
-    completed = completed_this_cycle or []
-    
-    # Try to get a prioritized topic
-    prioritized = get_prioritized_topics(limit=20)
-    
-    for topic in prioritized:
-        if topic not in completed and not is_topic_saturated(topic):
-            return topic
-    
-    # Fall back to dynamic topic selection
-    return get_next_topic(exclude=completed)
-
-
-def run_research_cycle():
-    """Run one complete research cycle."""
-    log_manager("═══════════════════════════════════════════════════")
-    log_manager("Starting research cycle")
-    log_manager("═══════════════════════════════════════════════════")
-    
-    # Rotate topics if needed
-    rotate_topics()
-    
-    # Get available agents
-    available = get_available_agents()
-    
-    if not available:
-        log_warn("manager", "All agents rate limited! Waiting for reset...")
-        notify_rate_limit_all(60)
-        return
-    
-    log_manager(f"{len(available)} agents available: {[a[0] for a in available]}")
-    
-    # Track completed topics this cycle
-    completed = []
-    
-    # Run each available agent on a topic
-    for agent_name, agent in available:
-        topic = select_topic(completed)
-        log_manager(f"Assigning {agent_name} to: {topic[:50]}...")
-        
-        try:
-            result = agent.research(topic)
-            
-            if result.get("success"):
-                log_manager(f"✓ {agent_name} completed research")
-                completed.append(topic)
-            elif result.get("rate_limited"):
-                log_warn("manager", f"{agent_name} hit rate limit")
-            else:
-                log_warn("manager", f"{agent_name} failed: {result.get('error', 'Unknown')}")
-                
-        except Exception as e:
-            log_error("manager", f"{agent_name} exception: {e}")
-    
-    # If we have results, run critic
-    if completed:
-        run_critic_evaluation(completed)
-    
-    # Run memory synthesis
-    run_memory_synthesis()
-    
-    # Log summary
-    log_summary()
-
-
-def run_critic_evaluation(topics: list):
-    """Run critic to evaluate recent research."""
-    critic = CriticAgent()
-    
-    if critic.is_rate_limited():
-        log_debug("manager", "Critic rate limited, skipping evaluation")
-        return
-    
-    # Get recent research content
-    recent = get_results(limit=10)
-    
-    if not recent:
-        return
-    
-    # Combine recent research for evaluation
-    combined_content = "\n\n---\n\n".join([
-        f"[{r.get('agent', '?')} | {r.get('topic', '')}]\n{r.get('content', '')[:800]}"
-        for r in recent[:5]
-    ])
-    
-    topic = topics[0] if topics else "Multiple topics"
-    
-    log_manager("Running critic evaluation...")
-    
+    # ── TREND ANALYST ─────────────────────────────────────────────
+    analyst_result = None
     try:
-        result = critic.evaluate(topic, combined_content)
-        
-        if result.get("success"):
-            score = result.get("score", 0)
-            log_manager(f"✓ Critic scored research: {score}/10")
-            
-            # Notify if high quality
-            if score >= 7:
-                takeaways = result.get("takeaways", [])
-                preview = takeaways[0] if takeaways else "High-quality research found"
-                notify_high_score("critic", topic, score, preview)
+        analyst = TrendAnalyst()
+        analyst_result = analyst.research(topic)
+        if analyst_result.get("success"):
+            log_info("trend_analyst", f"Research complete via {analyst_result.get('provider', '?')}")
         else:
-            log_warn("manager", f"Critic evaluation failed: {result.get('error')}")
-            
+            log_warn("trend_analyst", f"Failed: {analyst_result.get('error', 'unknown')}")
     except Exception as e:
-        log_error("manager", f"Critic exception: {e}")
-
-
-def run_memory_synthesis():
-    """Run memory agent to synthesize recent research."""
-    memory = MemoryAgent()
+        log_error("trend_analyst", f"Exception: {e}")
     
-    if memory.is_rate_limited():
-        log_debug("manager", "Memory agent rate limited, skipping synthesis")
-        return
-    
-    # Get recent results
-    recent = get_results(limit=5)
-    
-    if not recent:
-        return
-    
-    # Synthesize the most recent research
-    latest = recent[0]
-    
-    log_manager("Running memory synthesis...")
-    
+    # ── DEEP DIVER ────────────────────────────────────────────────
+    diver_result = None
     try:
-        result = memory.synthesize(latest.get("content", ""), latest.get("topic", ""))
-        
-        if result.get("success"):
-            novelty = result.get("novelty_score", 0)
-            log_manager(f"✓ Memory synthesis complete (novelty: {novelty}/10)")
+        diver = DeepDiver()
+        diver_result = diver.research(topic)
+        if diver_result.get("success"):
+            log_info("deep_diver", f"Research complete via {diver_result.get('provider', '?')}")
         else:
-            log_debug("manager", f"Memory synthesis failed: {result.get('error')}")
-            
+            log_warn("deep_diver", f"Failed: {diver_result.get('error', 'unknown')}")
     except Exception as e:
-        log_error("manager", f"Memory exception: {e}")
-
-
-def log_summary():
-    """Log current system status."""
-    try:
-        analytics = get_analytics_summary()
-        overall = analytics.get("overall", {})
-        
-        log_manager("───────────────────────────────────────────────────")
-        log_manager(f"Total Results: {overall.get('total_results', 0)}")
-        log_manager(f"Avg Score: {overall.get('avg_score', 0):.1f}/10")
-        log_manager(f"High Quality (7+): {overall.get('high_quality', 0)}")
-        log_manager(f"Last 24h: {analytics.get('last_24h', 0)} new results")
-        log_manager("───────────────────────────────────────────────────")
-        
-    except Exception as e:
-        log_debug("manager", f"log_summary error: {e}")
-
-
-# ═══════════════════════════════════════════════════════════════════
-# SCHEDULED JOBS
-# ═══════════════════════════════════════════════════════════════════
-
-def run_daily_summary():
-    """Run daily summary (end of day)."""
-    log_manager("Running daily summary...")
+        log_error("deep_diver", f"Exception: {e}")
     
+    # ── COMBINE RESULTS FOR CRITIC ────────────────────────────────
+    all_results = []
+    if scout_result and scout_result.get("success"):
+        all_results.append(scout_result.get("text", ""))
+    if analyst_result and analyst_result.get("success"):
+        all_results.append(analyst_result.get("text", ""))
+    if diver_result and diver_result.get("success"):
+        all_results.append(diver_result.get("text", ""))
+    
+    combined = "\n\n---\n\n".join(all_results)
+    
+    if not combined:
+        log_warn("manager", "No research results to evaluate")
+        return
+    
+    # ── CRITIC ────────────────────────────────────────────────────
+    score = 0
     try:
-        total = get_total_results()
-        today = date.today().isoformat()
-        
-        # Count today's results
-        results = get_results(limit=100)
-        new_today = len([r for r in results if r.get("created_at", "").startswith(today)])
-        
-        # Get top insights
-        insights = get_insights(limit=5)
-        top_insights = [i.get("content", "")[:100] for i in insights]
-        
-        notify_daily_summary(total, new_today, top_insights)
-        
-        # Save last summary date
-        db_set("last_summary_date", today)
-        
+        critic = CriticAgent()
+        eval_result = critic.evaluate(topic, combined)
+        if eval_result.get("success"):
+            score = eval_result.get("score", 5)
+            log_info("critic", f"Score: {score}/10 via {eval_result.get('provider', '?')}")
+            
+            # Notify if high score
+            min_notify = int(os.getenv("MIN_SCORE_TO_NOTIFY", "7"))
+            if score >= min_notify:
+                notify_high_score("critic", topic, score, combined[:500])
+        else:
+            log_warn("critic", f"Evaluation failed: {eval_result.get('error', 'unknown')}")
     except Exception as e:
-        log_error("manager", f"Daily summary error: {e}")
+        log_error("critic", f"Exception: {e}")
+    
+    # ── MEMORY SYNTHESIS ──────────────────────────────────────────
+    try:
+        memory = MemoryAgent()
+        mem_result = memory.synthesize(combined, topic)
+        if mem_result.get("success"):
+            novelty = mem_result.get("novelty_score", 5)
+            log_info("memory", f"Novelty: {novelty}/10 via {mem_result.get('provider', '?')}")
+        else:
+            log_warn("memory", f"Synthesis failed: {mem_result.get('error', 'unknown')}")
+    except Exception as e:
+        log_error("memory", f"Exception: {e}")
+    
+    log_manager("═══════════════════════════════════════════════════════════")
+    log_manager("CYCLE COMPLETE")
+    log_manager("═══════════════════════════════════════════════════════════")
 
 
 def run_weekly_synthesis():
-    """Run weekly synthesis (Sunday)."""
-    if datetime.now().weekday() != 6:  # Only on Sunday
-        return
-    
+    """Run weekly synthesis."""
     log_manager("Running weekly synthesis...")
-    
     try:
         synthesis = SynthesisAgent()
-        result = synthesis.synthesize()
-        
+        result = synthesis.generate_weekly()
         if result.get("success"):
-            log_manager("✓ Weekly synthesis complete")
+            log_info("synthesis", f"Weekly report complete via {result.get('provider', '?')}")
         else:
-            log_warn("manager", f"Weekly synthesis failed: {result.get('error')}")
-            
+            log_warn("synthesis", f"Weekly synthesis failed: {result.get('error', 'unknown')}")
     except Exception as e:
-        log_error("manager", f"Weekly synthesis error: {e}")
+        log_error("synthesis", f"Exception: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -474,43 +392,44 @@ def run_weekly_synthesis():
 # ═══════════════════════════════════════════════════════════════════
 
 def main():
-    """Main entry point."""
-    log_manager("═══════════════════════════════════════════════════")
-    log_manager("    AGENT RESEARCH HUB v4")
-    log_manager("═══════════════════════════════════════════════════")
+    """Main entry point with adaptive scheduling."""
+    log_manager("═══════════════════════════════════════════════════════════════")
+    log_manager("AGENT RESEARCH HUB v4 — Starting")
+    log_manager("═══════════════════════════════════════════════════════════════")
     
     # Initialize
-    log_manager("Initializing database...")
     init_db()
     init_manager_tables()
     seed_topics()
+    pool.initialize()
     
-    # Initial rotation
-    rotate_topics()
+    log_manager(f"Provider pool: {pool.get_available_count()}/{pool.get_total_count()} available")
     
-    # Schedule jobs
-    log_manager(f"Scheduling research cycle every {CYCLE_INTERVAL_MINUTES} minutes")
-    schedule.every(CYCLE_INTERVAL_MINUTES).minutes.do(run_research_cycle)
-    schedule.every().day.at("23:00").do(run_daily_summary)
-    schedule.every().sunday.at("10:00").do(run_weekly_synthesis)
+    # Track for weekly synthesis
+    last_weekly = db_get("last_weekly_synthesis", "")
     
-    # Run first cycle immediately
-    log_manager("Running initial research cycle...")
-    run_research_cycle()
+    # Run initial cycle if providers available
+    if should_run_cycle():
+        run_cycle()
     
-    # Main loop
-    log_manager("Entering main loop (Ctrl+C to stop)")
-    
+    # Main loop with adaptive timing
     while True:
-        try:
-            schedule.run_pending()
-            time.sleep(30)  # Check every 30 seconds
-        except KeyboardInterrupt:
-            log_manager("Shutting down...")
-            break
-        except Exception as e:
-            log_error("manager", f"Main loop error: {e}")
-            time.sleep(60)  # Wait a minute on error
+        interval = get_adaptive_interval()
+        log_manager(f"Next cycle in {interval} minutes")
+        time.sleep(interval * 60)
+        
+        # Check for weekly synthesis (Sundays at midnight-ish)
+        now = datetime.now()
+        if now.weekday() == 6 and now.hour < 1:
+            today = now.date().isoformat()
+            if last_weekly != today:
+                run_weekly_synthesis()
+                db_set("last_weekly_synthesis", today)
+                last_weekly = today
+        
+        # Run cycle if providers available
+        if should_run_cycle():
+            run_cycle()
 
 
 if __name__ == "__main__":
