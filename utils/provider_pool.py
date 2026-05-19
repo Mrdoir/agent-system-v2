@@ -281,11 +281,13 @@ class ProviderPool:
                  timeout: int = 60, caller: str = "unknown") -> dict:
         """
         Call an LLM with automatic provider selection and fallback.
+        Logs every attempt so we can diagnose failures.
         """
         self.initialize()
         
         tried_keys = set()
         last_error = None
+        errors_detail = []
         
         for attempt in range(len(self._keys)):
             key = self.get_best_key(preferred_providers)
@@ -306,6 +308,8 @@ class ProviderPool:
             tried_keys.add(key.key_id)
             key.record_call()
             
+            log_info("provider_pool", f"{caller} trying {key.key_id} ({key.provider}/{key.model})")
+            
             try:
                 result = self._make_request(key, prompt, system_msg, 
                                            max_tokens, temperature, timeout)
@@ -314,27 +318,41 @@ class ProviderPool:
                     key.record_success()
                     result["key_id"] = key.key_id
                     result["provider"] = key.provider
-                    log_debug("provider_pool", f"{caller} -> {key.key_id} succeeded")
                     return result
                 
+                # Log the specific error
+                error = result.get("error", "unknown")
+                log_warn("provider_pool", f"{key.key_id} failed: {error[:150]}")
+                errors_detail.append(f"{key.key_id}: {error[:100]}")
+                
                 # Check if rate limited
-                error = result.get("error", "").lower()
-                is_rate_limit = any(x in error for x in 
+                error_lower = error.lower()
+                is_rate_limit = any(x in error_lower for x in 
                     ["rate", "limit", "quota", "429", "too many"])
                 key.record_failure(is_rate_limit=is_rate_limit)
-                last_error = result.get("error")
+                last_error = error
+                
+                # Small delay before trying next provider
+                time.sleep(1)
                 
             except Exception as e:
                 key.record_failure(is_rate_limit=False)
                 last_error = str(e)
-                log_debug("provider_pool", f"{key.key_id} exception: {e}")
+                errors_detail.append(f"{key.key_id}: EXCEPTION {str(e)[:80]}")
+                log_warn("provider_pool", f"{key.key_id} exception: {e}")
+                time.sleep(1)
         
-        # All providers exhausted
+        # All providers exhausted — log full detail so we can diagnose
+        log_error("provider_pool", 
+            f"{caller} ALL EXHAUSTED after trying {len(tried_keys)} providers: "
+            + " | ".join(errors_detail))
+        
         return {
             "success": False,
             "all_exhausted": True,
             "error": last_error or "All providers exhausted",
-            "tried": list(tried_keys)
+            "tried": list(tried_keys),
+            "errors": errors_detail
         }
     
     def _make_request(self, key, prompt: str, system_msg: str,
@@ -373,91 +391,119 @@ class ProviderPool:
             messages.append({"role": "system", "content": system_msg})
         messages.append({"role": "user", "content": prompt})
         
-        resp = requests.post(
-            key.endpoint,
-            headers=headers,
-            json={
-                "model": key.model,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature
-            },
-            timeout=timeout
-        )
+        try:
+            resp = requests.post(
+                key.endpoint,
+                headers=headers,
+                json={
+                    "model": key.model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                },
+                timeout=timeout
+            )
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": f"{key.provider} timeout after {timeout}s"}
+        except requests.exceptions.ConnectionError as e:
+            return {"success": False, "error": f"{key.provider} connection error: {e}"}
         
         if resp.status_code == 429:
-            return {"success": False, "error": "rate_limit_429"}
+            return {"success": False, "error": f"rate_limit_429 from {key.provider}"}
         
         if resp.status_code != 200:
-            return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            return {"success": False, "error": f"{key.provider} HTTP {resp.status_code}: {resp.text[:200]}"}
         
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception:
+            return {"success": False, "error": f"{key.provider} invalid JSON response"}
+        
         if "choices" in data and len(data["choices"]) > 0:
-            return {"success": True, "text": data["choices"][0]["message"]["content"]}
+            text = data["choices"][0].get("message", {}).get("content", "")
+            if text:
+                return {"success": True, "text": text}
+            return {"success": False, "error": f"{key.provider} empty response content"}
         
-        return {"success": False, "error": "No choices in response"}
+        # Some providers return errors in the body
+        if "error" in data:
+            err_msg = data["error"].get("message", str(data["error"]))[:200] if isinstance(data["error"], dict) else str(data["error"])[:200]
+            return {"success": False, "error": f"{key.provider} API error: {err_msg}"}
+        
+        return {"success": False, "error": f"{key.provider} no choices in response: {str(data)[:150]}"}
     
     def _call_gemini(self, key, prompt: str, system_msg: str,
                      max_tokens: int, temperature: float, timeout: int) -> dict:
         """Call Google Gemini API."""
         full_prompt = f"{system_msg}\n\n{prompt}" if system_msg else prompt
         
-        resp = requests.post(
-            f"{key.endpoint}/v1beta/models/{key.model}:generateContent?key={key.key}",
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": full_prompt}]}],
-                "generationConfig": {
-                    "maxOutputTokens": max_tokens,
-                    "temperature": temperature
-                }
-            },
-            timeout=timeout
-        )
+        try:
+            resp = requests.post(
+                f"{key.endpoint}/v1beta/models/{key.model}:generateContent?key={key.key}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": full_prompt}]}],
+                    "generationConfig": {
+                        "maxOutputTokens": max_tokens,
+                        "temperature": temperature
+                    }
+                },
+                timeout=timeout
+            )
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": "gemini timeout"}
+        except requests.exceptions.ConnectionError as e:
+            return {"success": False, "error": f"gemini connection error: {e}"}
         
         if resp.status_code == 429:
             return {"success": False, "error": "rate_limit_429"}
         
         if resp.status_code != 200:
-            return {"success": False, "error": f"HTTP {resp.status_code}"}
+            return {"success": False, "error": f"gemini HTTP {resp.status_code}: {resp.text[:200]}"}
         
         data = resp.json()
         try:
             text = data["candidates"][0]["content"]["parts"][0]["text"]
             return {"success": True, "text": text}
         except (KeyError, IndexError):
-            return {"success": False, "error": "Invalid response structure"}
+            # Log what we actually got back
+            return {"success": False, "error": f"gemini bad response: {str(data)[:200]}"}
     
     def _call_cohere(self, key, prompt: str, system_msg: str,
                      max_tokens: int, temperature: float, timeout: int) -> dict:
         """Call Cohere API."""
-        resp = requests.post(
-            key.endpoint,
-            headers={
-                "Authorization": f"Bearer {key.key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": key.model,
-                "message": prompt,
-                "preamble": system_msg if system_msg else None,
-                "max_tokens": max_tokens,
-                "temperature": temperature
-            },
-            timeout=timeout
-        )
+        try:
+            resp = requests.post(
+                key.endpoint,
+                headers={
+                    "Authorization": f"Bearer {key.key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": key.model,
+                    "message": prompt,
+                    "preamble": system_msg if system_msg else None,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                },
+                timeout=timeout
+            )
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": "cohere timeout"}
+        except requests.exceptions.ConnectionError as e:
+            return {"success": False, "error": f"cohere connection error: {e}"}
         
         if resp.status_code == 429:
-            return {"success": False, "error": "rate_limit_429"}
+            return {"success": False, "error": "rate_limit_429 from cohere"}
         
         if resp.status_code != 200:
-            return {"success": False, "error": f"HTTP {resp.status_code}"}
+            return {"success": False, "error": f"cohere HTTP {resp.status_code}: {resp.text[:200]}"}
         
         data = resp.json()
         if "text" in data:
             return {"success": True, "text": data["text"]}
         
-        return {"success": False, "error": "No text in response"}
+        return {"success": False, "error": f"cohere no text in response: {str(data)[:150]}"}
 
 
 # Global singleton
