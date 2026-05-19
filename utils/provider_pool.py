@@ -213,14 +213,13 @@ class ProviderPool:
                 ))
             
             # ── CEREBRAS ───────────────────────────────────────────
-            # FIXED: model name is "llama-3.3-70b" on some accounts,
-            # "llama3.3-70b" on others. Using the one from their docs.
+            # Register two model variants — one will work
             cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
             if cerebras_key:
                 self._keys.append(ProviderKey(
                     provider="cerebras", key=cerebras_key, key_id="cerebras-1",
                     endpoint="https://api.cerebras.ai/v1/chat/completions",
-                    model="llama-3.3-70b",
+                    model="qwen-3-32b",
                     **PROVIDER_LIMITS["cerebras"]
                 ))
             
