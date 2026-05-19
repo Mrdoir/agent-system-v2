@@ -159,7 +159,7 @@ TOPIC_POOL = [
 # ═══════════════════════════════════════════════════════════════════
 
 def init_manager_tables():
-    """Create manager state tables if not exist."""
+    """Create manager state tables if not exist. Migrate if needed."""
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -170,11 +170,18 @@ def init_manager_tables():
             );
             CREATE TABLE IF NOT EXISTS research_topics (
                 topic TEXT PRIMARY KEY,
-                added_at TEXT NOT NULL,
-                priority INTEGER DEFAULT 0
+                added_at TEXT NOT NULL
             );
         """)
         conn.commit()
+        
+        # Safely add priority column if it doesn't exist
+        try:
+            cur.execute("ALTER TABLE research_topics ADD COLUMN priority INTEGER DEFAULT 0")
+            conn.commit()
+        except Exception:
+            conn.rollback()  # Column already exists, that's fine
+        
         cur.close()
         conn.close()
         log_manager("Postgres state tables ready")
@@ -220,11 +227,20 @@ def seed_topics():
         conn = get_conn()
         cur = conn.cursor()
         for topic in TOPIC_POOL:
-            cur.execute("""
-                INSERT INTO research_topics (topic, added_at, priority)
-                VALUES (%s, %s, 0)
-                ON CONFLICT (topic) DO NOTHING
-            """, (topic, datetime.now().isoformat()))
+            try:
+                cur.execute("""
+                    INSERT INTO research_topics (topic, added_at, priority)
+                    VALUES (%s, %s, 0)
+                    ON CONFLICT (topic) DO NOTHING
+                """, (topic, datetime.now().isoformat()))
+            except Exception:
+                conn.rollback()
+                # Fallback without priority column
+                cur.execute("""
+                    INSERT INTO research_topics (topic, added_at)
+                    VALUES (%s, %s)
+                    ON CONFLICT (topic) DO NOTHING
+                """, (topic, datetime.now().isoformat()))
         conn.commit()
         cur.close()
         conn.close()
