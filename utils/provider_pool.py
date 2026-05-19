@@ -189,6 +189,7 @@ class ProviderPool:
                     ))
             
             # ── OPENROUTER (your 2 keys + telegram key) ────────────
+            # FIXED: deepseek-r1:free was removed, using deepseek-v4-flash:free
             openrouter_keys_added = []
             for i, env_var in enumerate(["OPENROUTER_API_KEY", "OPENROUTER_API_KEY_2"], 1):
                 key = os.getenv(env_var, "")
@@ -196,7 +197,7 @@ class ProviderPool:
                     self._keys.append(ProviderKey(
                         provider="openrouter", key=key, key_id=f"openrouter-{i}",
                         endpoint="https://openrouter.ai/api/v1/chat/completions",
-                        model="deepseek/deepseek-r1:free",
+                        model="deepseek/deepseek-v4-flash:free",
                         **PROVIDER_LIMITS["openrouter"]
                     ))
                     openrouter_keys_added.append(key)
@@ -207,11 +208,13 @@ class ProviderPool:
                 self._keys.append(ProviderKey(
                     provider="openrouter", key=tg_or_key, key_id="openrouter-3",
                     endpoint="https://openrouter.ai/api/v1/chat/completions",
-                    model="deepseek/deepseek-r1:free",
+                    model="deepseek/deepseek-v4-flash:free",
                     **PROVIDER_LIMITS["openrouter"]
                 ))
             
             # ── CEREBRAS ───────────────────────────────────────────
+            # FIXED: model name is "llama-3.3-70b" on some accounts,
+            # "llama3.3-70b" on others. Using the one from their docs.
             cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
             if cerebras_key:
                 self._keys.append(ProviderKey(
