@@ -478,6 +478,49 @@ def health():
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
+@app.route("/api/debug_db")
+def api_debug_db():
+    """Deep diagnostics endpoint for database verification."""
+    debug_info = {}
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        
+        # 1. Check connection params
+        dsn = conn.get_dsn_parameters()
+        debug_info["connection"] = {
+            "host": dsn.get("host"),
+            "port": dsn.get("port"),
+            "dbname": dsn.get("dbname"),
+            "user": dsn.get("user")
+        }
+        
+        # 2. Check existing tables
+        cur.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+        """)
+        tables = [r[0] for r in cur.fetchall()]
+        debug_info["tables_found"] = tables
+        
+        # 3. Check counts
+        counts = {}
+        for t in tables:
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {t}")
+                counts[t] = cur.fetchone()[0]
+            except Exception as e:
+                counts[t] = f"Error: {e}"
+        debug_info["row_counts"] = counts
+        
+        cur.close()
+        conn.close()
+        return jsonify({"success": True, "diagnostics": debug_info})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ═══════════════════════════════════════════════════════════════════
 # RUN
 # ═══════════════════════════════════════════════════════════════════
