@@ -44,8 +44,8 @@ PROVIDER_LIMITS = {
 
 CURRENT_MODELS = {
     "gemini": "gemini-2.0-flash",
-    "groq": "llama-3.3-70b-versatile",
-    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "groq": "llama-3.1-8b-instant",       # FIXED: Changed from 70b (1,000 RPD) to 8b (14,400 RPD) to prevent Groq 429 rate limits!
+    "openrouter": "meta-llama/llama-3.1-8b-instruct:free", # FIXED: Swapped to 8b free model to bypass OpenRouter 70b congestion 429s!
     "cerebras": "llama-3.3-70b",            # FIXED: Corrected spelling to 'llama-3.3-70b'
     "cohere": "command-r7b-12-2024",      # NOTE: command-r-plus removed Sept 2025, command-r also gone
 }
