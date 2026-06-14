@@ -46,7 +46,7 @@ CURRENT_MODELS = {
     "gemini": "gemini-2.0-flash",
     "groq": "llama-3.1-8b-instant",       # FIXED: Changed from 70b (1,000 RPD) to 8b (14,400 RPD) to prevent Groq 429 rate limits!
     "openrouter": "openrouter/free",       # FIXED: Set to the official OpenRouter Free Models Router ('openrouter/free') to prevent 404 deprecation crashes permanently!
-    "cerebras": "llama3.1-8b",            # FIXED: Set to Cerebras' active free-tier 8B model name (no hyphens)
+    "cerebras": "gpt-oss-120b",            # FIXED: Mapped to Cerebras' high-performance free model 'gpt-oss-120b' (OpenAI GPT OSS) running at instant speed!
     "cohere": "command-r7b-12-2024",      # NOTE: command-r-plus removed Sept 2025, command-r also gone
 }
 
