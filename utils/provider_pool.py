@@ -45,8 +45,8 @@ PROVIDER_LIMITS = {
 CURRENT_MODELS = {
     "gemini": "gemini-2.0-flash",
     "groq": "llama-3.3-70b-versatile",
-    "openrouter": "deepseek/deepseek-v4-flash:free",
-    "cerebras": "llama3.1-8b",            # NOTE: llama-3.3-70b deprecated on free tier Feb 2026
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "cerebras": "llama-3.3-70b",            # FIXED: Corrected spelling to 'llama-3.3-70b'
     "cohere": "command-r7b-12-2024",      # NOTE: command-r-plus removed Sept 2025, command-r also gone
 }
 
