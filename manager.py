@@ -315,8 +315,8 @@ def run_cycle():
     except Exception as e:
         log_error("market_scout", f"Exception: {e}")
     
-    # Small breathing room so pool spreads to other providers
-    time.sleep(2)
+    # Small breathing room so pool spreads to other providers and avoids RPM limits
+    time.sleep(10)
     
     # ── TREND ANALYST ─────────────────────────────────────────────
     analyst_result = None
@@ -330,7 +330,7 @@ def run_cycle():
     except Exception as e:
         log_error("trend_analyst", f"Exception: {e}")
     
-    time.sleep(2)
+    time.sleep(10)
     
     # ── DEEP DIVER ────────────────────────────────────────────────
     diver_result = None
@@ -359,7 +359,7 @@ def run_cycle():
         log_warn("manager", "No research results to evaluate")
         return
     
-    time.sleep(2)
+    time.sleep(10)
     
     # ── CRITIC ────────────────────────────────────────────────────
     score = 0
@@ -379,7 +379,7 @@ def run_cycle():
     except Exception as e:
         log_error("critic", f"Exception: {e}")
     
-    time.sleep(2)
+    time.sleep(10)
     
     # ── MEMORY SYNTHESIS ──────────────────────────────────────────
     try:
