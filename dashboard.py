@@ -85,6 +85,43 @@ def api_export():
         headers={"Content-Disposition": "attachment; filename=research_export.json"}
     )
 
+@app.route("/api/export/full")
+def api_export_full():
+    """Streaming export in batches - no timeout on big databases.
+    ?meta=1      -> skip the content column (tiny file, good for analysis)
+    ?since_id=N  -> only rows with id > N
+    Output: one JSON object per line (.jsonl)
+    """
+    meta = request.args.get("meta") == "1"
+    since_id = request.args.get("since_id", 0, type=int)
+    cols = "id, agent, topic, score, created_at" if meta else "id, agent, topic, content, score, created_at"
+
+    def gen():
+        last_id = since_id
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            while True:
+                cur.execute(
+                    f"SELECT {cols} FROM results WHERE id > %s ORDER BY id LIMIT 1000",
+                    (last_id,)
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    break
+                for r in rows:
+                    yield json.dumps(dict(r), default=str) + "\n"
+                last_id = rows[-1]["id"]
+        finally:
+            cur.close()
+            conn.close()
+
+    return Response(
+        gen(),
+        mimetype="application/x-ndjson",
+        headers={"Content-Disposition": "attachment; filename=research_full.jsonl"}
+    )
+
 @app.route("/api/import", methods=["GET", "POST"])
 def api_import():
     if request.method == "GET":
