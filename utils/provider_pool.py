@@ -1,33 +1,42 @@
 """
-PROVIDER POOL v3 — FINAL FIXED VERSION (May 2026)
-===================================================
-FIXES:
-1. Cerebras: qwen-3-32b was deprecated Feb 2026. Using llama3.1-8b (confirmed working)
-2. Cohere: command-r-plus removed Sept 2025. Using command-r7b-12-2024 (free tier)
-3. Together AI: REMOVED (requires paid credits - HTTP 402)
-4. get_available_count() now returns INT (not tuple) — fixes manager.py comparison
-5. Added get_total_count() — fixes missing method error
-6. Better error handling
+PROVIDER POOL v4 — validated outputs, Gemini model chain, real-model tracking
+=============================================================================
+What changed vs v3 (and why):
+1. OUTPUT VALIDATION. v3 treated ANY non-empty text as success, so a safety
+   classifier ("User Safety: safe") or an empty/tiny reply was saved as research.
+   Now junk is rejected and the next provider is tried automatically.
+2. GEMINI MODEL CHAIN. gemini-2.0-flash was retired by Google on 1 June 2026
+   (all tiers) and gemini-2.5-flash has an October 2026 shutdown date. The pool
+   now tries a chain of models and remembers the one that works. Override
+   without touching code: set GEMINI_MODEL_CHAIN="model-a,model-b,model-c".
+3. REAL MODEL TRACKING. 'openrouter/free' is a ROUTER that picks a different
+   free model per request. We now return the model that actually answered
+   (model_used) and reject guard/safety models.
+4. DEAD KEYS STOP WASTING CALLS. HTTP 401/403/404 pauses that key for 6 hours.
+5. FIXED: the old check `"rate" in error` matched the word "generateContent",
+   so every Gemini error looked like a rate limit.
+6. probe_all() — tiny live test of every key (used by /api/diag).
 
-VERIFIED MODEL IDS (May 2026):
-- Gemini:     gemini-2.0-flash
-- Groq:       llama-3.3-70b-versatile
-- OpenRouter:  deepseek/deepseek-v4-flash:free
-- Cerebras:   llama3.1-8b  (llama-3.3-70b deprecated on free tier Feb 2026)
-- Cohere:     command-r7b-12-2024  (command-r-plus removed, command-r removed)
+All models can be overridden from Render env vars:
+GROQ_MODEL, OPENROUTER_MODEL, CEREBRAS_MODEL, COHERE_MODEL, GEMINI_MODEL_CHAIN
 """
 
 import os
+import re
 import time
 import threading
 import requests
-from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from utils.logger import log_info, log_warn, log_debug, log_error
 
 
 # ═══════════════════════════════════════════════════════════════════
-# PROVIDER DEFINITIONS — rate limits per free tier (May 2026)
+# CONFIG
 # ═══════════════════════════════════════════════════════════════════
+
+def _env_list(name: str, default: str) -> list:
+    return [x.strip() for x in os.getenv(name, default).split(",") if x.strip()]
+
 
 PROVIDER_LIMITS = {
     "gemini":      {"rpm": 15, "rpd": 1500, "cooldown_minutes": 1},
@@ -37,19 +46,55 @@ PROVIDER_LIMITS = {
     "cohere":      {"rpm": 5, "rpd": 5000, "cooldown_minutes": 2},
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# CURRENT FREE MODELS (Updated May 2026)
-# When models change, ONLY update this dictionary
-# ═══════════════════════════════════════════════════════════════════
+# Tried in order; the first that works is remembered. Google retires models
+# often, so keep this editable from the environment.
+GEMINI_MODEL_CHAIN = _env_list(
+    "GEMINI_MODEL_CHAIN", "gemini-3.5-flash,gemini-2.5-flash,gemini-3-flash-preview"
+) or ["gemini-3.5-flash"]
 
 CURRENT_MODELS = {
-    "gemini": "gemini-2.0-flash",
-    "groq": "llama-3.1-8b-instant",       # FIXED: Changed from 70b (1,000 RPD) to 8b (14,400 RPD) to prevent Groq 429 rate limits!
-    "openrouter": "openrouter/free",       # FIXED: Set to the official OpenRouter Free Models Router ('openrouter/free') to prevent 404 deprecation crashes permanently!
-    "cerebras": "gpt-oss-120b",            # FIXED: Mapped to Cerebras' high-performance free model 'gpt-oss-120b' (OpenAI GPT OSS) running at instant speed!
-    "cohere": "command-r7b-12-2024",      # NOTE: command-r-plus removed Sept 2025, command-r also gone
+    "gemini": GEMINI_MODEL_CHAIN[0],
+    "groq": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+    "openrouter": os.getenv("OPENROUTER_MODEL", "openrouter/free"),
+    "cerebras": os.getenv("CEREBRAS_MODEL", "gpt-oss-120b"),
+    "cohere": os.getenv("COHERE_MODEL", "command-r7b-12-2024"),
 }
 
+# ═══════════════════════════════════════════════════════════════════
+# OUTPUT VALIDATION
+# ═══════════════════════════════════════════════════════════════════
+
+GUARD_MODEL_RE = re.compile(r"guard|safeguard|moderat|shield|safety", re.I)
+SAFETY_OUTPUT_RE = re.compile(r'^\s*[\{\[]?\s*"?(user|response|prompt)[\s_]*safety"?\s*[:=]', re.I)
+BARE_VERDICT_RE = re.compile(r"^\s*(safe|unsafe)\s*(\n\s*S\d+[\w,\s]*)?\s*$", re.I)
+REASONING_LEAK_RE = re.compile(r"^\s*(here'?s|here is)\s+a\s+thinking\s+process", re.I)
+THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def clean_text(text: str) -> str:
+    """Strip <think>...</think> blocks some reasoning models put in the answer."""
+    return THINK_BLOCK_RE.sub("", text or "").strip()
+
+
+def junk_reason(text: str, model_used: str = "", min_chars: int = 0):
+    """Return a reason string if the output is not usable, else None."""
+    t = (text or "").strip()
+    if not t:
+        return "empty output"
+    if model_used and GUARD_MODEL_RE.search(model_used):
+        return f"safety/guard model ({model_used})"
+    if SAFETY_OUTPUT_RE.match(t) or BARE_VERDICT_RE.match(t):
+        return "safety-classifier output"
+    if REASONING_LEAK_RE.match(t):
+        return "leaked reasoning instead of an answer"
+    if len(t) < min_chars:
+        return f"too short ({len(t)} < {min_chars} chars)"
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# KEY OBJECT
+# ═══════════════════════════════════════════════════════════════════
 
 class ProviderKey:
     """Represents a single API key with usage tracking."""
@@ -65,7 +110,6 @@ class ProviderKey:
         self.rpd = rpd
         self.cooldown_minutes = cooldown_minutes
 
-        # Usage tracking
         self.calls_this_minute = 0
         self.calls_this_hour = 0
         self.calls_today = 0
@@ -73,7 +117,6 @@ class ProviderKey:
         self.hour_reset = time.time() + 3600
         self.day_reset = time.time() + 86400
 
-        # Rate limit tracking
         self.rate_limited_until = 0
         self.consecutive_failures = 0
         self.last_success = 0
@@ -82,7 +125,6 @@ class ProviderKey:
         self.total_successes = 0
 
     def is_available(self) -> bool:
-        """Check if this key can accept a request right now."""
         now = time.time()
 
         if now >= self.minute_reset:
@@ -101,7 +143,6 @@ class ProviderKey:
             return False
         if self.calls_today >= int(self.rpd * 0.9):
             return False
-
         return True
 
     def record_call(self):
@@ -127,6 +168,11 @@ class ProviderKey:
                 f"{self.key_id} rate limited for {cooldown}s "
                 f"(failures: {self.consecutive_failures})")
 
+    def disable_for(self, seconds: int, why: str = ""):
+        """Pause a key that is clearly broken (bad key / retired model)."""
+        self.rate_limited_until = max(self.rate_limited_until, time.time() + seconds)
+        log_warn("provider_pool", f"{self.key_id} paused for {seconds // 3600}h — {why}")
+
     def time_until_available(self) -> int:
         now = time.time()
         if now >= self.rate_limited_until:
@@ -145,20 +191,20 @@ class ProviderKey:
         return minute_usage + daily_usage + recency_penalty + failure_penalty
 
 
+# ═══════════════════════════════════════════════════════════════════
+# POOL
+# ═══════════════════════════════════════════════════════════════════
+
 class ProviderPool:
-    """
-    Global pool of all API provider keys.
-    Thread-safe. Shared across all agents.
-    """
+    """Global pool of all API provider keys. Thread-safe. Shared across agents."""
 
     def __init__(self):
         self._lock = threading.Lock()
         self._keys = []
         self._initialized = False
+        self._gemini_working = None   # last Gemini model that answered
 
-    # ═══════════════════════════════════════════════════════════════
-    # INITIALIZATION
-    # ═══════════════════════════════════════════════════════════════
+    # ── initialization ─────────────────────────────────────────────
 
     def initialize(self):
         """Load all API keys from environment and register them."""
@@ -169,38 +215,31 @@ class ProviderPool:
             if self._initialized:
                 return
 
-            # ── GEMINI (primary key) ───────────────────────────────
+            # GEMINI (primary + bot key)
             gemini_key = os.getenv("GEMINI_API_KEY", "")
             if gemini_key:
                 self._keys.append(ProviderKey(
                     provider="gemini", key=gemini_key, key_id="gemini-1",
                     endpoint="https://generativelanguage.googleapis.com",
-                    model=CURRENT_MODELS["gemini"],
-                    **PROVIDER_LIMITS["gemini"]
-                ))
+                    model=CURRENT_MODELS["gemini"], **PROVIDER_LIMITS["gemini"]))
 
-            # ── GEMINI (bot key) ───────────────────────────────────
             gemini_bot_key = os.getenv("GEMINI_BOT_KEY", "")
             if gemini_bot_key and gemini_bot_key != gemini_key:
                 self._keys.append(ProviderKey(
                     provider="gemini", key=gemini_bot_key, key_id="gemini-2",
                     endpoint="https://generativelanguage.googleapis.com",
-                    model=CURRENT_MODELS["gemini"],
-                    **PROVIDER_LIMITS["gemini"]
-                ))
+                    model=CURRENT_MODELS["gemini"], **PROVIDER_LIMITS["gemini"]))
 
-            # ── GROQ (2 keys) ──────────────────────────────────────
+            # GROQ (2 keys)
             for i, env_var in enumerate(["GROQ_API_KEY", "GROQ_API_KEY_2"], 1):
                 key = os.getenv(env_var, "")
                 if key:
                     self._keys.append(ProviderKey(
                         provider="groq", key=key, key_id=f"groq-{i}",
                         endpoint="https://api.groq.com/openai/v1/chat/completions",
-                        model=CURRENT_MODELS["groq"],
-                        **PROVIDER_LIMITS["groq"]
-                    ))
+                        model=CURRENT_MODELS["groq"], **PROVIDER_LIMITS["groq"]))
 
-            # ── OPENROUTER (up to 3 keys) ──────────────────────────
+            # OPENROUTER (2 keys + telegram key)
             openrouter_keys_added = []
             for i, env_var in enumerate(["OPENROUTER_API_KEY", "OPENROUTER_API_KEY_2"], 1):
                 key = os.getenv(env_var, "")
@@ -208,67 +247,50 @@ class ProviderPool:
                     self._keys.append(ProviderKey(
                         provider="openrouter", key=key, key_id=f"openrouter-{i}",
                         endpoint="https://openrouter.ai/api/v1/chat/completions",
-                        model=CURRENT_MODELS["openrouter"],
-                        **PROVIDER_LIMITS["openrouter"]
-                    ))
+                        model=CURRENT_MODELS["openrouter"], **PROVIDER_LIMITS["openrouter"]))
                     openrouter_keys_added.append(key)
 
-            # ── OPENROUTER (telegram key) ──────────────────────────
             tg_or_key = os.getenv("TELEGRAM_OPENROUTER_KEY", "")
             if tg_or_key and tg_or_key not in openrouter_keys_added:
                 self._keys.append(ProviderKey(
                     provider="openrouter", key=tg_or_key, key_id="openrouter-3",
                     endpoint="https://openrouter.ai/api/v1/chat/completions",
-                    model=CURRENT_MODELS["openrouter"],
-                    **PROVIDER_LIMITS["openrouter"]
-                ))
+                    model=CURRENT_MODELS["openrouter"], **PROVIDER_LIMITS["openrouter"]))
 
-            # ── CEREBRAS (FIXED: using llama3.1-8b) ───────────────
+            # CEREBRAS
             cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
             if cerebras_key:
                 self._keys.append(ProviderKey(
                     provider="cerebras", key=cerebras_key, key_id="cerebras-1",
                     endpoint="https://api.cerebras.ai/v1/chat/completions",
-                    model=CURRENT_MODELS["cerebras"],
-                    **PROVIDER_LIMITS["cerebras"]
-                ))
+                    model=CURRENT_MODELS["cerebras"], **PROVIDER_LIMITS["cerebras"]))
 
-            # ── COHERE (FIXED: using command-r7b-12-2024) ──────────
+            # COHERE
             cohere_key = os.getenv("COHERE_API_KEY", "")
             if cohere_key:
                 self._keys.append(ProviderKey(
                     provider="cohere", key=cohere_key, key_id="cohere-1",
                     endpoint="https://api.cohere.ai/v1/chat",
-                    model=CURRENT_MODELS["cohere"],
-                    **PROVIDER_LIMITS["cohere"]
-                ))
-
-            # ── TOGETHER (SKIPPED — needs paid credits) ────────────
-            # HTTP 402: Credit limit exceeded
+                    model=CURRENT_MODELS["cohere"], **PROVIDER_LIMITS["cohere"]))
 
             self._initialized = True
-            log_info("provider_pool", f"Initialized with {len(self._keys)} API keys")
+            log_info("provider_pool", f"Initialized with {len(self._keys)} API keys "
+                                      f"(gemini chain: {', '.join(GEMINI_MODEL_CHAIN)})")
 
-    # ═══════════════════════════════════════════════════════════════
-    # STATUS METHODS (used by manager.py)
-    # ═══════════════════════════════════════════════════════════════
+    # ── status (used by manager.py) ────────────────────────────────
 
     def get_available_count(self) -> int:
-        """Return count of available keys. Used by manager for comparisons like <= 1."""
         with self._lock:
             return sum(1 for k in self._keys if k.is_available())
 
     def get_total_count(self) -> int:
-        """Return total number of registered keys. Used by manager."""
         return len(self._keys)
 
     def get_available_providers(self) -> list:
-        """Return list of available provider key IDs."""
         with self._lock:
             return [k.key_id for k in self._keys if k.is_available()]
 
     def get_next_available_time(self) -> int:
-        """Return seconds until next provider becomes available."""
         with self._lock:
             if not self._keys:
                 return 60
@@ -276,7 +298,6 @@ class ProviderPool:
             return min(times) if times else 60
 
     def get_status_summary(self) -> dict:
-        """Get summary of all providers for debugging."""
         self.initialize()
         summary = {}
         for key in self._keys:
@@ -291,24 +312,53 @@ class ProviderPool:
             }
         return summary
 
-    # ═══════════════════════════════════════════════════════════════
-    # MAIN LLM CALL METHOD
-    # ═══════════════════════════════════════════════════════════════
+    def probe_all(self, timeout: int = 20) -> list:
+        """Tiny live test of every key. Does not touch rate-limit counters."""
+        self.initialize()
+
+        def probe(k):
+            t0 = time.time()
+            try:
+                r = self._call_provider(k, "Reply with exactly: OK", "", 20, 0.0, timeout)
+            except Exception as e:
+                r = {"success": False, "error": str(e)[:150]}
+            model_used = r.get("model_used", k.model)
+            problem = None
+            if r.get("success"):
+                problem = junk_reason(clean_text(r.get("text", "")), model_used, 0)
+            else:
+                problem = str(r.get("error", ""))[:160]
+            return {
+                "key_id": k.key_id,
+                "provider": k.provider,
+                "configured_model": k.model,
+                "model_used": model_used,
+                "ok": bool(r.get("success")) and not problem,
+                "problem": problem,
+                "sample": (r.get("text", "") or "")[:40],
+                "seconds": round(time.time() - t0, 1),
+            }
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            return list(ex.map(probe, self._keys))
+
+    # ── main LLM call ──────────────────────────────────────────────
 
     def call_llm(self, prompt: str, system_msg: str = "",
                  preferred_providers: list = None, max_tokens: int = 1500,
                  temperature: float = 0.7, timeout: int = 60,
-                 caller: str = "unknown") -> dict:
+                 caller: str = "unknown", min_chars: int = 0) -> dict:
         """
         Call an LLM using the best available provider.
         Tries preferred providers first, then falls back to others.
+        Outputs that are junk (empty, too short, safety-classifier text,
+        guard models) are rejected and the next provider is tried.
         """
         self.initialize()
 
         tried = []
         last_error = None
 
-        # Build priority list
         if preferred_providers:
             priority_keys = []
             other_keys = []
@@ -338,24 +388,42 @@ class ProviderPool:
                 result = self._call_provider(key, prompt, system_msg, max_tokens, temperature, timeout)
 
                 if result["success"]:
+                    text = clean_text(result["text"])
+                    model_used = result.get("model_used") or key.model
+                    reason = junk_reason(text, model_used, min_chars)
+
+                    if reason:
+                        key.record_failure(is_rate_limit=False)
+                        tried.append(f"{key.key_id}: junk ({reason})")
+                        last_error = f"junk output: {reason}"
+                        log_warn("provider_pool",
+                                 f"{caller}: {key.key_id} [{model_used}] returned junk — {reason}. Trying next provider")
+                        time.sleep(1)
+                        continue
+
                     key.record_success()
                     return {
                         "success": True,
-                        "text": result["text"],
+                        "text": text,
                         "provider": key.provider,
                         "key_id": key.key_id,
-                        "model": key.model
+                        "model": key.model,
+                        "model_used": model_used,
                     }
-                else:
-                    error = result.get("error", "unknown")
-                    tried.append(f"{key.key_id}: {error[:80]}")
-                    last_error = error
 
-                    is_rate_limit = "429" in str(error) or "rate" in str(error).lower()
-                    key.record_failure(is_rate_limit=is_rate_limit)
+                error = result.get("error", "unknown")
+                err_l = str(error).lower()
+                tried.append(f"{key.key_id}: {str(error)[:80]}")
+                last_error = error
 
-                    log_warn("provider_pool", f"{key.key_id} failed: {error[:100]}")
-                    time.sleep(1)
+                is_rate_limit = "429" in err_l or "rate_limit" in err_l or "rate limit" in err_l
+                key.record_failure(is_rate_limit=is_rate_limit)
+
+                if any(s in str(error) for s in ("HTTP 401", "HTTP 403", "HTTP 404")):
+                    key.disable_for(6 * 3600, str(error)[:80])
+
+                log_warn("provider_pool", f"{key.key_id} failed: {str(error)[:100]}")
+                time.sleep(1)
 
             except Exception as e:
                 error = str(e)
@@ -365,7 +433,6 @@ class ProviderPool:
                 log_error("provider_pool", f"{key.key_id} exception: {error}")
                 time.sleep(1)
 
-        # All exhausted
         log_warn("provider_pool",
             f"{caller} ALL EXHAUSTED after trying {len(tried)} providers: {' | '.join(tried)}")
 
@@ -376,12 +443,9 @@ class ProviderPool:
             "tried": tried
         }
 
-    # ═══════════════════════════════════════════════════════════════
-    # PROVIDER-SPECIFIC API CALLS
-    # ═══════════════════════════════════════════════════════════════
+    # ── provider-specific calls ────────────────────────────────────
 
     def _call_provider(self, key, prompt, system_msg, max_tokens, temperature, timeout):
-        """Route to the correct provider API."""
         try:
             if key.provider == "gemini":
                 return self._call_gemini(key, prompt, system_msg, max_tokens, temperature, timeout)
@@ -391,8 +455,7 @@ class ProviderPool:
                 return self._call_openrouter(key, prompt, system_msg, max_tokens, temperature, timeout)
             elif key.provider == "cohere":
                 return self._call_cohere(key, prompt, system_msg, max_tokens, temperature, timeout)
-            else:
-                return {"success": False, "error": f"unknown_provider: {key.provider}"}
+            return {"success": False, "error": f"unknown_provider: {key.provider}"}
         except requests.exceptions.Timeout:
             return {"success": False, "error": f"{key.provider} timeout after {timeout}s"}
         except requests.exceptions.ConnectionError:
@@ -401,8 +464,11 @@ class ProviderPool:
             return {"success": False, "error": f"{key.provider} error: {str(e)[:150]}"}
 
     def _call_gemini(self, key, prompt, system_msg, max_tokens, temperature, timeout):
-        """Call Google Gemini API."""
-        url = f"{key.endpoint}/v1beta/models/{key.model}:generateContent?key={key.key}"
+        """Gemini with a model chain: skips models Google has retired."""
+        chain = list(GEMINI_MODEL_CHAIN)
+        if self._gemini_working in chain:
+            chain.remove(self._gemini_working)
+            chain.insert(0, self._gemini_working)
 
         contents = []
         if system_msg:
@@ -410,30 +476,47 @@ class ProviderPool:
             contents.append({"role": "model", "parts": [{"text": "Understood."}]})
         contents.append({"role": "user", "parts": [{"text": prompt}]})
 
-        resp = requests.post(url, json={
+        # extra headroom: newer Gemini models spend output tokens on "thinking"
+        payload = {
             "contents": contents,
-            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}
-        }, timeout=timeout)
+            "generationConfig": {"maxOutputTokens": max_tokens + 1024, "temperature": temperature}
+        }
 
-        if resp.status_code == 429:
-            return {"success": False, "error": "rate_limit_429"}
-        if resp.status_code != 200:
-            return {"success": False, "error": f"gemini HTTP {resp.status_code}: {resp.text[:200]}"}
+        last_error = "gemini: empty model chain"
+        for model in chain:
+            url = f"{key.endpoint}/v1beta/models/{model}:generateContent?key={key.key}"
+            resp = requests.post(url, json=payload, timeout=timeout)
+            body = resp.text[:200]
 
-        data = resp.json()
-        if "candidates" in data and data["candidates"]:
-            text = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            if text:
-                return {"success": True, "text": text}
+            if resp.status_code == 429:
+                return {"success": False, "error": f"rate_limit_429 from gemini ({model})"}
 
-        return {"success": False, "error": f"gemini no candidates: {str(data)[:200]}"}
+            gone = resp.status_code == 404 or (
+                resp.status_code == 400 and re.search(r"not found|no longer|deprecated|not supported", body, re.I))
+            if gone:
+                last_error = f"gemini HTTP {resp.status_code} for {model}: {body}"
+                log_warn("provider_pool", f"Gemini model {model} unavailable ({resp.status_code}) — trying next in chain")
+                continue
+
+            if resp.status_code != 200:
+                return {"success": False, "error": f"gemini HTTP {resp.status_code} ({model}): {body}"}
+
+            data = resp.json()
+            cands = data.get("candidates") or []
+            if cands:
+                parts = (cands[0].get("content") or {}).get("parts") or []
+                text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+                if text.strip():
+                    self._gemini_working = model
+                    key.model = model
+                    return {"success": True, "text": text, "model_used": model}
+            last_error = f"gemini no text from {model}: {str(data)[:150]}"
+
+        return {"success": False, "error": last_error}
 
     def _call_openai_compatible(self, key, prompt, system_msg, max_tokens, temperature, timeout):
-        """Call OpenAI-compatible API (Groq, Cerebras)."""
-        headers = {
-            "Authorization": f"Bearer {key.key}",
-            "Content-Type": "application/json"
-        }
+        """OpenAI-compatible API (Groq, Cerebras)."""
+        headers = {"Authorization": f"Bearer {key.key}", "Content-Type": "application/json"}
 
         messages = []
         if system_msg:
@@ -441,29 +524,25 @@ class ProviderPool:
         messages.append({"role": "user", "content": prompt})
 
         resp = requests.post(key.endpoint, headers=headers, json={
-            "model": key.model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature
+            "model": key.model, "messages": messages,
+            "max_tokens": max_tokens, "temperature": temperature
         }, timeout=timeout)
 
         if resp.status_code == 429:
             return {"success": False, "error": f"rate_limit_429 from {key.provider}"}
-        if resp.status_code == 404:
-            return {"success": False, "error": f"{key.provider} HTTP 404: {resp.text[:200]}"}
         if resp.status_code != 200:
             return {"success": False, "error": f"{key.provider} HTTP {resp.status_code}: {resp.text[:200]}"}
 
         data = resp.json()
         if "choices" in data and data["choices"]:
-            text = data["choices"][0].get("message", {}).get("content", "")
+            text = (data["choices"][0].get("message") or {}).get("content") or ""
             if text:
-                return {"success": True, "text": text}
+                return {"success": True, "text": text, "model_used": data.get("model") or key.model}
 
         return {"success": False, "error": f"{key.provider} no choices: {str(data)[:200]}"}
 
     def _call_openrouter(self, key, prompt, system_msg, max_tokens, temperature, timeout):
-        """Call OpenRouter API."""
+        """OpenRouter. With 'openrouter/free' the REAL model is in data['model']."""
         headers = {
             "Authorization": f"Bearer {key.key}",
             "Content-Type": "application/json",
@@ -477,10 +556,8 @@ class ProviderPool:
         messages.append({"role": "user", "content": prompt})
 
         resp = requests.post(key.endpoint, headers=headers, json={
-            "model": key.model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature
+            "model": key.model, "messages": messages,
+            "max_tokens": max_tokens, "temperature": temperature
         }, timeout=timeout)
 
         if resp.status_code == 429:
@@ -490,25 +567,17 @@ class ProviderPool:
 
         data = resp.json()
         if "choices" in data and data["choices"]:
-            text = data["choices"][0].get("message", {}).get("content", "")
+            text = (data["choices"][0].get("message") or {}).get("content") or ""
             if text:
-                return {"success": True, "text": text}
+                return {"success": True, "text": text, "model_used": data.get("model") or key.model}
 
         return {"success": False, "error": f"openrouter no choices: {str(data)[:200]}"}
 
     def _call_cohere(self, key, prompt, system_msg, max_tokens, temperature, timeout):
-        """Call Cohere API."""
-        headers = {
-            "Authorization": f"Bearer {key.key}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {key.key}", "Content-Type": "application/json"}
 
-        payload = {
-            "model": key.model,
-            "message": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature
-        }
+        payload = {"model": key.model, "message": prompt,
+                   "max_tokens": max_tokens, "temperature": temperature}
         if system_msg:
             payload["preamble"] = system_msg
 
@@ -516,14 +585,12 @@ class ProviderPool:
 
         if resp.status_code == 429:
             return {"success": False, "error": "rate_limit_429 from cohere"}
-        if resp.status_code == 404:
-            return {"success": False, "error": f"cohere HTTP 404: {resp.text[:200]}"}
         if resp.status_code != 200:
             return {"success": False, "error": f"cohere HTTP {resp.status_code}: {resp.text[:200]}"}
 
         data = resp.json()
         if "text" in data:
-            return {"success": True, "text": data["text"]}
+            return {"success": True, "text": data["text"], "model_used": key.model}
 
         return {"success": False, "error": f"cohere no text: {str(data)[:200]}"}
 
