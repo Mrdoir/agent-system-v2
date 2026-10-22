@@ -269,6 +269,24 @@ def api_dump():
         </html>
         """, 500
 
+@app.route("/api/diag")
+def api_diag():
+    """Live health check: one tiny call per API key + a probe of every search source.
+    Read-only: it writes nothing to the database."""
+    from concurrent.futures import ThreadPoolExecutor
+    out = {}
+    try:
+        from utils.provider_pool import pool
+        from utils.web_search import diagnose_search
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_prov = ex.submit(pool.probe_all)
+            f_search = ex.submit(diagnose_search)
+            out["providers"] = f_prov.result()
+            out["search"] = f_search.result()
+    except Exception as e:
+        out["error"] = str(e)
+    return jsonify(out)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
